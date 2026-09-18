@@ -16,6 +16,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Redirect
 from fastapi.staticfiles import StaticFiles
 from pydantic_core import PydanticCustomError
 from starlette.exceptions import HTTPException as StarletteHTTPException
+from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from . import __version__
 from .config import Settings
@@ -37,8 +38,10 @@ STATIC_DIR = Path(__file__).resolve().parent / "static"
 PAGE_TEMPLATE = STATIC_DIR / "page.html"
 # Python < 3.13 does not know the web font type: StaticFiles would serve application/octet-stream
 mimetypes.add_type("font/woff2", ".woff2")
-# Longest path echoed back on the 404 page and in the logs
+# Longest path echoed back in the logs
 MAX_ECHOED_PATH = 300
+# Largest request body: a redirect is at most 255 + 100 + 2048 characters, JSON escaping included this is plenty
+MAX_BODY_BYTES = 16 * 1024
 
 # Pages and API answers are same-origin only; nothing inline, nothing external
 SECURITY_HEADERS = {
@@ -125,6 +128,8 @@ def not_found_page(slug: str) -> HTMLResponse:
 async def _http_error(request: Request, exc: Exception) -> Response:
     """Routing errors keep FastAPI's answer, except a 404 under /redirect, which is the HTML page like any other."""
     assert isinstance(exc, StarletteHTTPException)
+    if exc.status_code == 413:
+        return _error(413, t("errors.body_too_large"))
     path = _route_path(request)
     if exc.status_code == 404 and _is_redirect_path(path):
         return not_found_page(path.removeprefix(REDIRECT_PREFIX))
@@ -142,6 +147,35 @@ async def _database_error(request: Request, exc: Exception) -> Response:
     response = _error(503, t("errors.database_unavailable"))
     response.headers.update(headers)
     return response
+
+
+class BodySizeLimit:
+    """Refuses a request body over MAX_BODY_BYTES with 413, before it is read into memory."""
+
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+        declared = dict(scope["headers"]).get(b"content-length", b"")
+        if declared.isdigit() and int(declared) > MAX_BODY_BYTES:
+            await _error(413, t("errors.body_too_large"))(scope, receive, send)
+            return
+        received = 0
+
+        async def counting_receive() -> Message:
+            # A chunked body has no length up front: count it as it arrives
+            nonlocal received
+            message = await receive()
+            if message["type"] == "http.request":
+                received += len(message.get("body", b""))
+                if received > MAX_BODY_BYTES:
+                    raise StarletteHTTPException(413)
+            return message
+
+        await self.app(scope, counting_receive, send)
 
 
 def create_app(settings: Settings | None = None, clock: Clock = utc_now) -> FastAPI:
@@ -176,6 +210,8 @@ def create_app(settings: Settings | None = None, clock: Clock = utc_now) -> Fast
     app.add_exception_handler(RequestValidationError, _validation_error)
     app.add_exception_handler(sqlite3.Error, _database_error)
     app.add_exception_handler(StarletteHTTPException, _http_error)
+    # Added before security_headers, so it runs inside it: a 413 carries the security headers too
+    app.add_middleware(BodySizeLimit)
 
     @app.middleware("http")
     async def security_headers(request: Request, call_next: Callable[[Request], Awaitable[Response]]) -> Response:

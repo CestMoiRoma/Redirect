@@ -48,6 +48,7 @@
   "status.server_error": "The server could not complete the request. Try again.",
 
   "errors.body_invalid": "The request body is not valid JSON.",
+  "errors.body_too_large": "The request body is too large.",
   "errors.fields_invalid": "Some fields are invalid.",
   "errors.value_invalid": "This value is not valid.",
   "errors.not_found": "This redirect no longer exists.",

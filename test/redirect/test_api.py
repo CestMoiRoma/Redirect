@@ -1,5 +1,7 @@
 """API tests on the real app (TestClient, temporary SQLite database): every route, every error, verbatim."""
 
+import json
+
 import pytest
 from support import PUBLIC_BASE_URL, create
 
@@ -266,6 +268,40 @@ def test_create_with_a_body_that_is_not_a_json_object(client, content, headers):
     response = client.post("/api/redirects", content=content, headers=headers)
     assert response.status_code == 422
     assert response.json() == {"detail": "The request body is not valid JSON.", "errors": {}}
+
+
+BODY_TOO_LARGE = {"detail": "The request body is too large.", "errors": {}}
+
+
+def padded(size: int) -> bytes:
+    """A valid create body of exactly `size` bytes (the padding goes in a field the API ignores)."""
+    base = json.dumps({**BUDGET, "pad": ""}).encode()
+    body = json.dumps({**BUDGET, "pad": "x" * (size - len(base))}).encode()
+    assert len(body) == size
+    return body
+
+
+def test_a_body_at_the_limit_is_accepted(client):
+    response = client.post("/api/redirects", content=padded(16 * 1024), headers={"Content-Type": "application/json"})
+    assert response.status_code == 201
+
+
+@pytest.mark.parametrize(("method", "path"), [("POST", "/api/redirects"), ("PUT", "/api/redirects/1")])
+def test_a_body_over_the_limit_is_413(client, method, path):
+    response = client.request(method, path, content=padded(16 * 1024 + 1), headers={"Content-Type": "application/json"})
+    assert response.status_code == 413
+    assert response.json() == BODY_TOO_LARGE
+    assert response.headers["x-content-type-options"] == "nosniff"
+    assert client.get("/api/redirects").json()["redirects"] == []
+
+
+def test_a_chunked_body_over_the_limit_is_413(client):
+    body = padded(64 * 1024)
+    chunks = (body[i : i + 4096] for i in range(0, len(body), 4096))
+    response = client.post("/api/redirects", content=chunks, headers={"Content-Type": "application/json"})
+    assert response.status_code == 413
+    assert response.json() == BODY_TOO_LARGE
+    assert client.get("/api/redirects").json()["redirects"] == []
 
 
 # --- Update --------------------------------------------------------------------------------------------

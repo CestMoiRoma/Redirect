@@ -1,6 +1,7 @@
 """API tests on the real app (TestClient, temporary SQLite database): every route, every error, verbatim."""
 
 import json
+import logging
 
 import pytest
 from support import PUBLIC_BASE_URL, create
@@ -63,6 +64,34 @@ def test_a_missing_database_answers_503_on_the_api(client, tmp_path):
     response = client.get("/api/redirects")
     assert response.status_code == 503
     assert response.json() == DATABASE_UNAVAILABLE
+
+
+def access_record(path: str) -> logging.LogRecord:
+    """The record uvicorn's access logger emits for one request."""
+    return logging.getLogger("uvicorn.access").makeRecord(
+        "uvicorn.access",
+        logging.INFO,
+        __file__,
+        0,
+        '%s - "%s %s HTTP/%s" %d',
+        ("127.0.0.1:50000", "GET", path, "1.1", 200),
+        None,
+    )
+
+
+def test_the_health_check_is_left_out_of_the_access_log(client):
+    access = logging.getLogger("uvicorn.access")
+    assert not access.filter(access_record("/api/health"))
+    assert access.filter(access_record("/api/redirects"))
+    assert access.filter(access_record("/redirect/api/health"))
+    assert access.filter(access_record("/api/health?verbose=1"))
+
+
+def test_the_access_log_filter_is_installed_once(make_client):
+    make_client()
+    make_client()
+    filters = logging.getLogger("uvicorn.access").filters
+    assert sum(type(f).__name__ == "HealthCheckFilter" for f in filters) == 1
 
 
 def test_index_serves_the_single_page_ui(client):

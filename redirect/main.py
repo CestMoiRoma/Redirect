@@ -89,8 +89,23 @@ async def _validation_error(_: Request, exc: Exception) -> Response:
     return _error(422, t("errors.fields_invalid"), errors)
 
 
+HEALTH_PATH = "/api/health"
+
+
+class HealthCheckFilter(logging.Filter):
+    """Drops uvicorn's access line for the health check: the container healthcheck calls it every 30 s."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        # uvicorn logs '%s - "%s %s HTTP/%s" %d' with (client, method, path, http version, status)
+        args = record.args
+        return not (isinstance(args, tuple) and len(args) == 5 and args[2] == HEALTH_PATH)
+
+
 def configure_logging(level: str) -> None:
     """One line per event on stderr, under the "redirect" logger (uvicorn keeps its own loggers)."""
+    access = logging.getLogger("uvicorn.access")
+    if not any(isinstance(f, HealthCheckFilter) for f in access.filters):
+        access.addFilter(HealthCheckFilter())
     if not logger.handlers:
         handler = logging.StreamHandler()
         handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s"))
@@ -251,7 +266,7 @@ def create_app(settings: Settings | None = None, clock: Clock = utc_now) -> Fast
 
     # --- API -----------------------------------------------------------------------------------------------
 
-    @app.get("/api/health")
+    @app.get(HEALTH_PATH)
     def health() -> Response:
         try:
             db.ping()

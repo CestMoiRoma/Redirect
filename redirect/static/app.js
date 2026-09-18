@@ -176,7 +176,8 @@
     button.textContent = copied ? t('list.copied') : t('list.copy.failed')
     button.classList.toggle('is-copied', copied)
     button.classList.toggle('is-failed', !copied)
-    if (copied) setStatus(t('status.copied'))
+    // The status line is announced to screen readers: it must never keep a stale "copied" message
+    setStatus(copied ? t('status.copied') : t('status.copy_failed'), !copied)
     clearTimeout(copyTimers.get(button))
     copyTimers.set(
       button,

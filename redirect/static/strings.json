@@ -42,6 +42,7 @@
   "status.saved": "Redirect “{name}” saved.",
   "status.deleted": "Redirect “{name}” deleted.",
   "status.copied": "Link copied to the clipboard.",
+  "status.copy_failed": "Could not copy the link. Select it in the list and copy it by hand.",
   "status.load_failed": "Could not load the redirects. Reload the page to try again.",
   "status.network": "Could not reach the server. Try again.",
 

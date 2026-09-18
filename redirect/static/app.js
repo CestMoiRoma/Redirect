@@ -246,6 +246,7 @@
       if (error.status === 404) {
         // The entry was deleted elsewhere: close, refresh, tell, and keep the keyboard in the list
         form.closest('dialog')?.close()
+        state.highlightId = null
         await reload().catch(() => {})
         setStatus(error.message, true)
         $('#list-title').focus()

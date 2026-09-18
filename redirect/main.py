@@ -2,6 +2,7 @@
 
 import html
 import logging
+import mimetypes
 import re
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
@@ -29,6 +30,8 @@ from .strings import t
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 NOT_FOUND_TEMPLATE = STATIC_DIR / "404.html"
+# Python < 3.13 does not know the web font type: StaticFiles would serve application/octet-stream
+mimetypes.add_type("font/woff2", ".woff2")
 # Longest path echoed back on the 404 page and in the logs
 MAX_ECHOED_PATH = 300
 

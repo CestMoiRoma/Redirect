@@ -21,4 +21,4 @@ build-backend = "setuptools.build_meta"
 packages = ["redirect"]
 
 [tool.setuptools.package-data]
-redirect = ["static/*"]
+redirect = ["static/*", "static/fonts/*"]

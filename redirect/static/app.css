@@ -1,0 +1,538 @@
+/* Redirect UI. Plain CSS, no external font: the page must render the same offline. */
+
+:root {
+  --bg: #f5f6f8;
+  --surface: #ffffff;
+  --text: #1b1f24;
+  --muted: #56606c;
+  --border: #d7dce3;
+  --border-strong: #b9c1cc;
+  --accent: #1d5bb8;
+  --accent-hover: #174a96;
+  --accent-soft: #e7effb;
+  --ok: #17693c;
+  --ok-soft: #e5f4ea;
+  --danger: #b3261e;
+  --danger-hover: #8f1e18;
+  --danger-soft: #fdecea;
+  --warn-text: #6a4800;
+  --warn-soft: #fff5d9;
+  --warn-border: #e2b33b;
+  --focus: #1d5bb8;
+  --radius: 10px;
+  --font: system-ui, -apple-system, 'Segoe UI', 'Noto Sans', 'DejaVu Sans', sans-serif;
+  --mono: ui-monospace, 'SFMono-Regular', Menlo, Consolas, 'DejaVu Sans Mono', monospace;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 15px/1.5 var(--font);
+}
+
+h1,
+h2,
+p {
+  margin: 0;
+}
+
+[hidden] {
+  display: none !important;
+}
+
+.visually-hidden,
+.target-label {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+:focus-visible {
+  outline: 3px solid var(--focus);
+  outline-offset: 2px;
+}
+
+.wrap {
+  max-width: 1120px;
+  margin: 0 auto;
+  padding: 0 20px;
+}
+
+/* --- Header ----------------------------------------------------------------------------------------- */
+
+.top {
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  padding: 18px 0;
+  margin-bottom: 24px;
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 22px;
+  line-height: 1.2;
+}
+
+.brand-mark {
+  width: 26px;
+  height: 26px;
+  flex: none;
+  background: url('favicon.svg') center / contain no-repeat;
+}
+
+.tagline {
+  margin-top: 4px;
+  color: var(--muted);
+}
+
+/* --- Layout ----------------------------------------------------------------------------------------- */
+
+.layout {
+  display: grid;
+  gap: 24px;
+  padding-bottom: 40px;
+}
+
+@media (min-width: 900px) {
+  .layout {
+    grid-template-columns: minmax(0, 1fr) 360px;
+    align-items: start;
+    gap: 32px;
+  }
+
+  .create {
+    position: sticky;
+    top: 20px;
+  }
+}
+
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 20px;
+}
+
+h2 {
+  font-size: 17px;
+  line-height: 1.3;
+}
+
+/* --- Buttons ---------------------------------------------------------------------------------------- */
+
+.button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 38px;
+  padding: 7px 14px;
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text);
+  font: 600 14px/1.2 var(--font);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.button:hover {
+  background: #eef1f5;
+}
+
+.button:disabled {
+  opacity: 0.6;
+  cursor: progress;
+}
+
+.button.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #ffffff;
+}
+
+.button.primary:hover {
+  background: var(--accent-hover);
+}
+
+.button.danger {
+  background: var(--danger);
+  border-color: var(--danger);
+  color: #ffffff;
+}
+
+.button.danger:hover {
+  background: var(--danger-hover);
+}
+
+.button.danger-ghost {
+  color: var(--danger);
+}
+
+.button.danger-ghost:hover {
+  background: var(--danger-soft);
+}
+
+.button.copy {
+  background: var(--accent-soft);
+  border-color: var(--accent-soft);
+  color: var(--accent);
+  min-width: 104px;
+}
+
+.button.copy:hover {
+  border-color: var(--accent);
+}
+
+.button.copy.is-copied {
+  background: var(--ok-soft);
+  border-color: var(--ok-soft);
+  color: var(--ok);
+}
+
+.button.copy.is-failed {
+  background: var(--danger-soft);
+  border-color: var(--danger-soft);
+  color: var(--danger);
+}
+
+/* --- List ------------------------------------------------------------------------------------------- */
+
+.list-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.list-head h2 {
+  font-size: 19px;
+}
+
+.list-head h2:focus {
+  outline: none;
+}
+
+.count {
+  margin-left: 6px;
+  color: var(--muted);
+  font-size: 14px;
+  font-weight: 400;
+}
+
+.filter input {
+  width: 280px;
+  max-width: 100%;
+}
+
+.list {
+  display: grid;
+  gap: 12px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 16px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 14px 16px;
+}
+
+.item.is-new {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+.item-link {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 12px;
+}
+
+.link {
+  min-width: 0;
+  color: var(--accent);
+  font: 600 15px/1.4 var(--mono);
+  overflow-wrap: anywhere;
+}
+
+.link:hover {
+  color: var(--accent-hover);
+}
+
+.item-name {
+  margin-top: 6px;
+  font-weight: 600;
+}
+
+.item-target {
+  margin-top: 2px;
+  color: var(--muted);
+  font: 13px/1.45 var(--mono);
+  overflow-wrap: anywhere;
+}
+
+.item-target::before {
+  content: '→ ';
+  font-family: var(--font);
+}
+
+.item-actions {
+  display: flex;
+  gap: 8px;
+}
+
+@media (max-width: 599px) {
+  .wrap {
+    padding: 0 14px;
+  }
+
+  .item {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 12px;
+  }
+
+  .item-link .copy {
+    width: 100%;
+  }
+
+  .item-actions .button {
+    flex: 1;
+  }
+
+  .filter,
+  .filter input {
+    width: 100%;
+  }
+}
+
+.empty {
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius);
+  padding: 28px 20px;
+  text-align: center;
+  color: var(--muted);
+}
+
+.empty-title {
+  color: var(--text);
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+
+.status {
+  margin-bottom: 12px;
+  padding: 10px 14px;
+  border-left: 4px solid var(--ok);
+  border-radius: 6px;
+  background: var(--ok-soft);
+  color: var(--ok);
+  font-weight: 600;
+}
+
+.status-error {
+  border-left-color: var(--danger);
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
+#load-error {
+  margin-top: 0;
+}
+
+/* --- Forms ------------------------------------------------------------------------------------------ */
+
+.redirect-form {
+  display: grid;
+  gap: 16px;
+  margin-top: 16px;
+}
+
+.dialog .redirect-form {
+  margin-top: 0;
+}
+
+.field {
+  display: grid;
+  gap: 6px;
+}
+
+label {
+  font-weight: 600;
+}
+
+input[type='text'],
+input[type='url'],
+input[type='search'] {
+  width: 100%;
+  min-height: 40px;
+  padding: 8px 11px;
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text);
+  font: 15px/1.3 var(--font);
+}
+
+input[name='slug'],
+input[name='target'] {
+  font-family: var(--mono);
+  font-size: 14px;
+}
+
+input:hover {
+  border-color: #8e99a8;
+}
+
+input[aria-invalid='true'] {
+  border-color: var(--danger);
+  box-shadow: 0 0 0 1px var(--danger);
+}
+
+/* The link prefix sits on top of the slug input, as one control */
+.prefixed {
+  display: grid;
+}
+
+.prefix {
+  padding: 5px 11px;
+  border: 1px solid var(--border-strong);
+  border-bottom: 0;
+  border-radius: 8px 8px 0 0;
+  background: #eef1f5;
+  color: var(--muted);
+  font: 13px/1.4 var(--mono);
+  overflow-wrap: anywhere;
+}
+
+.prefixed input {
+  border-radius: 0 0 8px 8px;
+}
+
+.hint {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.field-error,
+.form-error {
+  color: var(--danger);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.warning {
+  padding: 8px 12px;
+  border: 1px solid var(--warn-border);
+  border-radius: 8px;
+  background: var(--warn-soft);
+  color: var(--warn-text);
+  font-size: 14px;
+}
+
+.form-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.create .form-actions .button {
+  width: 100%;
+}
+
+/* --- Dialogs ---------------------------------------------------------------------------------------- */
+
+.dialog {
+  width: min(540px, calc(100vw - 28px));
+  max-height: calc(100vh - 28px);
+  padding: 22px;
+  border: 0;
+  border-radius: 12px;
+  background: var(--surface);
+  color: var(--text);
+  box-shadow: 0 18px 50px rgba(15, 23, 42, 0.25);
+}
+
+.dialog::backdrop {
+  background: rgba(15, 23, 42, 0.45);
+}
+
+.dialog h2 {
+  margin-bottom: 4px;
+}
+
+.dialog-small {
+  width: min(460px, calc(100vw - 28px));
+}
+
+.dialog-small p {
+  margin-top: 10px;
+}
+
+.dialog-small .form-actions {
+  margin-top: 20px;
+}
+
+.delete-name {
+  font-weight: 600;
+}
+
+#delete-text {
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
+.clipboard-helper {
+  position: fixed;
+  top: 0;
+  left: -9999px;
+  opacity: 0;
+}
+
+/* --- 404 page --------------------------------------------------------------------------------------- */
+
+.notfound {
+  max-width: 560px;
+  margin: 12vh auto 0;
+  text-align: center;
+}
+
+.notfound h1 {
+  font-size: 24px;
+  margin-bottom: 10px;
+}
+
+.notfound p {
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
+.notfound .button {
+  margin-top: 22px;
+  text-decoration: none;
+}

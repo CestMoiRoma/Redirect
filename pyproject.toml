@@ -1,0 +1,24 @@
+[project]
+name = "redirect"
+version = "0.1.0"
+description = "Fixed public links whose target can change at any time."
+readme = "README.md"
+requires-python = ">=3.12"
+# Runtime dependencies, pinned. sqlite3 comes from the standard library.
+dependencies = [
+  "fastapi==0.141.1",
+  "uvicorn==0.53.0",
+]
+
+[project.scripts]
+redirect = "redirect.__main__:main"
+
+[build-system]
+requires = ["setuptools>=75"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["redirect"]
+
+[tool.setuptools.package-data]
+redirect = ["static/*"]

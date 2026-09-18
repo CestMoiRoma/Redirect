@@ -1,0 +1,16 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+*.egg-info/
+
+# Local runtime data (just run)
+data/
+
+# Test outputs
+test-reports/
+
+.DS_Store

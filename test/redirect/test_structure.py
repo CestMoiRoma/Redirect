@@ -1,5 +1,5 @@
 """Structural guards: no external resource in the front end, no forbidden import, every UI text in strings.json,
-test dependencies aligned with the app's lock."""
+test dependencies aligned with the app's lock, the app image's lock exported from it."""
 
 import ast
 import json
@@ -267,3 +267,69 @@ def test_runtime_dependencies_are_pinned():
     assert all(re.fullmatch(r"[\w-]+==[\w.]+", dep) for dep in dependencies), dependencies
     locked = app_lock()
     assert {dep.split("==")[0]: dep.split("==")[1] for dep in dependencies}.items() <= locked.items()
+
+
+# --- App image lock ------------------------------------------------------------------------------------
+
+# One pinned requirement with its hashes: `name==version [; marker] --hash=sha256:... [--hash=...]`
+LOCK_ENTRY = re.compile(r"([A-Za-z0-9][\w.-]*)==([^\s;]+)(?:\s*;[^\n]*?)?((?:\s+--hash=sha256:[0-9a-f]{64})+)")
+
+
+def normalized(name: str) -> str:
+    return re.sub(r"[-_.]+", "-", name).lower()
+
+
+def runtime_closure() -> dict[str, dict]:
+    """Packages of uv.lock the app needs at run time: its dependencies, transitively (never a dev group)."""
+    packages = {p["name"]: p for p in tomllib.loads((REPO / "uv.lock").read_text(encoding="utf-8"))["package"]}
+    closure: dict[str, dict] = {}
+    todo = [dep["name"] for dep in packages["redirect"].get("dependencies", [])]
+    while todo:
+        name = todo.pop()
+        if name not in closure:
+            closure[name] = packages[name]
+            todo.extend(dep["name"] for dep in packages[name].get("dependencies", []))
+    return closure
+
+
+def locked_hashes(package: dict) -> set[str]:
+    """Every file uv.lock allows for a package: its source archive and its wheels."""
+    files = ([package["sdist"]] if "sdist" in package else []) + package.get("wheels", [])
+    return {file["hash"] for file in files}
+
+
+def image_lock() -> dict[str, tuple[str, set[str]]]:
+    """requirements.lock, what the app image installs: name -> (version, hashes)."""
+    text = (REPO / "requirements.lock").read_text(encoding="utf-8").replace("\\\n", " ")
+    entries: dict[str, tuple[str, set[str]]] = {}
+    for line in text.splitlines():
+        line = line.split("#", 1)[0].strip()
+        if not line:
+            continue
+        match = LOCK_ENTRY.fullmatch(line)
+        assert match, f"requirements.lock: not a pinned requirement with hashes: {line!r}"
+        name, version, hashes = match.groups()
+        assert normalized(name) not in entries, f"requirements.lock lists {name} twice"
+        entries[normalized(name)] = (version, set(re.findall(r"sha256:[0-9a-f]{64}", hashes)))
+    return entries
+
+
+def test_the_image_lock_is_the_runtime_closure_of_uv_lock():
+    """requirements.lock is exported from uv.lock (just app-lock): same packages, versions and hashes."""
+    closure = runtime_closure()
+    assert {"fastapi", "uvicorn", "pydantic-core"} <= closure.keys()
+    locked = {normalized(name): (package["version"], locked_hashes(package)) for name, package in closure.items()}
+    exported = image_lock()
+    assert "redirect" not in exported, "the app itself is installed from the source, not from the lock"
+    assert sorted(exported) == sorted(locked), "requirements.lock and uv.lock list different packages: just app-lock"
+    for name, (version, hashes) in locked.items():
+        assert exported[name][0] == version, f"{name}: {exported[name][0]} in requirements.lock, {version} in uv.lock"
+        assert exported[name][1] == hashes, f"{name}: hashes differ from uv.lock: just app-lock"
+
+
+def test_the_image_lock_parser_rejects_what_pip_would_resolve():
+    assert LOCK_ENTRY.fullmatch("h11==0.16.0 --hash=sha256:" + "0" * 64)
+    assert LOCK_ENTRY.fullmatch("typing-extensions==4.16.0 ; python_full_version < '3.13' --hash=sha256:" + "a" * 64)
+    assert not LOCK_ENTRY.fullmatch("h11==0.16.0")
+    assert not LOCK_ENTRY.fullmatch("h11>=0.8 --hash=sha256:" + "0" * 64)
+    assert not LOCK_ENTRY.fullmatch("-e .")

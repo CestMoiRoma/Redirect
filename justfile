@@ -1,7 +1,7 @@
 # Redirect task runner
 #
 # Lint, tests and GUI goldens always run in the pinned CI image (test/ci/Dockerfile), never on the host.
-# The app image (root Dockerfile) is another image: what users run.
+# The app image (root Dockerfile) is another image: what users run, tested by `just image-test`.
 # `just ci` runs exactly what CI runs, in the same order: while CI has no runner, it is the gate.
 
 ci_image := env("CI_IMAGE", "redirect-ci:local")
@@ -25,6 +25,10 @@ up: image
 # Stop and remove the compose container; the data volume stays
 down:
     REDIRECT_IMAGE={{ app_image }} docker compose down
+
+# Build the app image for PLATFORM and test it running: health, API, 302, volume, clean stop (CI job image:app)
+image-test PLATFORM=ci_platform:
+    test/ci/image-test.sh {{ PLATFORM }}
 
 # Regenerate requirements.lock (the app image's dependencies, with hashes) from uv.lock, offline
 app-lock:
@@ -85,12 +89,14 @@ gui-goldens-stability APP RUNS="3": ci-image
     dir="$(just _test-dir '{{ APP }}')"
     just _in-ci test/ci/goldens-stability.sh "$dir" {{ RUNS }}
 
+# The app image test comes last and uses the host's Docker, like the CI job image:app on the runner.
 # Exactly what CI runs, same image, same order (goldens are compared with HEAD: commit first)
 ci: ci-image
     just _in-ci test/ci/lint.sh
     just _in-ci test/redirect/run-tests.sh tests
     just _in-ci test/redirect/run-tests.sh goldens
     test/ci/check-goldens.sh
+    test/ci/image-test.sh {{ ci_platform }}
 
 _gui-goldens DIR: ci-image
     just _in-ci test/{{ DIR }}/run-tests.sh goldens

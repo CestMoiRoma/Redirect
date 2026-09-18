@@ -9,6 +9,9 @@ from support import create
 NOT_FOUND_TITLE = "<title>Link not found</title>"
 
 
+UNKNOWN_TEXT = "<p>No redirect exists at this address. The link may have been changed or removed.</p>"
+
+
 def not_found_text(path: str) -> str:
     return f"<p>No redirect exists for {path}. The link may have been changed or removed.</p>"
 
@@ -133,34 +136,53 @@ def test_deleted_slug_is_404(client, budget):
         b"/redirect/compta%2Fbudget-2026%00",
         b"/redirect/%ff%fe",
         b"/redirect/a%20b",
+        # A final newline: the route pattern would match it as "compta/budget-2026", an alias of the real link
+        b"/redirect/compta/budget-2026%0A",
+        # A newline inside: no route matches at all, and it must still be the HTML page, not a JSON 404
+        b"/redirect/a%0Ab",
+        b"/redirect/%0A",
     ],
 )
 @pytest.mark.parametrize("method", ["GET", "HEAD"])
 def test_malformed_slugs_are_404_never_500(client, budget, raw_path, method):
     response = get_raw(client, raw_path, method)
     assert response.status_code == 404
+    assert response.headers["content-type"] == "text/html; charset=utf-8"
+    assert "location" not in response.headers
     if method == "GET":
         assert NOT_FOUND_TITLE in response.text
+        # An invalid path is never echoed back
+        assert UNKNOWN_TEXT in response.text
 
 
-def test_the_404_page_escapes_the_requested_path(client):
+def test_the_404_page_never_echoes_an_invalid_path(client):
     response = get_raw(client, b"/redirect/%3Cscript%3Ealert(1)%3C/script%3E")
     assert response.status_code == 404
     assert "<script>" not in response.text
-    assert not_found_text("/redirect/&lt;script&gt;alert(1)&lt;/script&gt;") in response.text
+    assert "alert" not in response.text
+    assert UNKNOWN_TEXT in response.text
 
 
-def test_the_404_page_shortens_very_long_paths(client):
-    path = "/redirect/" + "a" * 400
-    response = client.get(path)
+def test_the_404_page_cannot_be_used_to_show_arbitrary_text(client):
+    path = "/redirect/x.%20Your%20session%20expired,%20sign%20in%20again%20at%20https:%2F%2Fevil.example%2Flogin"
+    response = get_raw(client, path.encode())
     assert response.status_code == 404
-    assert not_found_text(path[:300] + "…") in response.text
+    assert "session" not in response.text
+    assert "evil.example" not in response.text
+    assert UNKNOWN_TEXT in response.text
+
+
+def test_the_404_page_does_not_echo_a_path_longer_than_a_slug(client):
+    response = client.get("/redirect/" + "a" * 256)
+    assert response.status_code == 404
+    assert UNKNOWN_TEXT in response.text
 
 
 def test_the_404_page_does_not_substitute_braces_from_the_path(client):
     response = get_raw(client, b"/redirect/%7Bpath%7D%7B%7Btitle%7D%7D")
     assert response.status_code == 404
-    assert not_found_text("/redirect/{path}{{title}}") in response.text
+    assert "{{title}}" not in response.text
+    assert UNKNOWN_TEXT in response.text
 
 
 # --- The database cannot be reached ---------------------------------------------------------------------

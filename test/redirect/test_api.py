@@ -378,3 +378,10 @@ def test_delete_with_a_non_integer_id(client):
 )
 def test_wrong_method_is_405(client, method, path):
     assert client.request(method, path).status_code == 405
+
+
+@pytest.mark.parametrize("path", ["/api/nope", "/nope", "/redirects"])
+def test_unknown_paths_outside_redirect_keep_the_json_404(client, path):
+    response = client.get(path)
+    assert response.status_code == 404
+    assert response.json() == {"detail": "Not Found"}

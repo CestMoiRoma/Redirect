@@ -67,6 +67,7 @@
 
   "notfound.title": "Link not found",
   "notfound.text": "No redirect exists for {path}. The link may have been changed or removed.",
+  "notfound.text_unknown": "No redirect exists at this address. The link may have been changed or removed.",
   "unavailable.title": "Redirect is unavailable",
   "unavailable.text": "The database cannot be reached right now. Try the link again in a moment.",
 

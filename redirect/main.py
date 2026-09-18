@@ -10,15 +10,18 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, Request, Response
+from fastapi.exception_handlers import http_exception_handler
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic_core import PydanticCustomError
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from . import __version__
 from .config import Settings
 from .db import Clock, Database, Redirect, SlugTakenError, utc_now
 from .models import (
+    REDIRECT_PREFIX,
     ErrorOut,
     RedirectIn,
     RedirectList,
@@ -100,19 +103,38 @@ def render_page(title: str, text: str) -> str:
     return _TEMPLATE_KEY.sub(lambda m: html.escape(values[m.group(1)]), template)
 
 
-def render_not_found(path: str) -> str:
-    shown = path if len(path) <= MAX_ECHOED_PATH else path[:MAX_ECHOED_PATH] + "…"
-    return render_page(t("notfound.title"), t("notfound.text", path=shown))
+def _route_path(request: Request) -> str:
+    """The decoded request path, without the root path the app may be mounted under."""
+    return str(request.scope["path"]).removeprefix(request.scope.get("root_path", ""))
 
 
 def _is_redirect_path(path: str) -> bool:
-    return path == "/redirect" or path.startswith("/redirect/")
+    return path == "/redirect" or path.startswith(REDIRECT_PREFIX)
+
+
+def not_found_page(slug: str) -> HTMLResponse:
+    """The 404 page of a public link. The path is shown only when it is a valid slug: never arbitrary text."""
+    logger.info("redirect slug=%r status=404", slug[:MAX_ECHOED_PATH])
+    if is_valid_slug(slug):
+        text = t("notfound.text", path=REDIRECT_PREFIX + slug)
+    else:
+        text = t("notfound.text_unknown")
+    return HTMLResponse(render_page(t("notfound.title"), text), status_code=404, headers={"Cache-Control": "no-store"})
+
+
+async def _http_error(request: Request, exc: Exception) -> Response:
+    """Routing errors keep FastAPI's answer, except a 404 under /redirect, which is the HTML page like any other."""
+    assert isinstance(exc, StarletteHTTPException)
+    path = _route_path(request)
+    if exc.status_code == 404 and _is_redirect_path(path):
+        return not_found_page(path.removeprefix(REDIRECT_PREFIX))
+    return await http_exception_handler(request, exc)
 
 
 async def _database_error(request: Request, exc: Exception) -> Response:
     """The database is locked, gone or broken: 503, as a page for the public links, as JSON for the API."""
-    path = request.url.path
-    logger.error("database error on %s: %s", path[:MAX_ECHOED_PATH], exc)
+    path = _route_path(request)
+    logger.error("database error on %r: %s", path[:MAX_ECHOED_PATH], exc)
     headers = {"Cache-Control": "no-store", "Retry-After": "5"}
     if _is_redirect_path(path):
         page = render_page(t("unavailable.title"), t("unavailable.text"))
@@ -153,6 +175,7 @@ def create_app(settings: Settings | None = None, clock: Clock = utc_now) -> Fast
     app.state.db = db
     app.add_exception_handler(RequestValidationError, _validation_error)
     app.add_exception_handler(sqlite3.Error, _database_error)
+    app.add_exception_handler(StarletteHTTPException, _http_error)
 
     @app.middleware("http")
     async def security_headers(request: Request, call_next: Callable[[Request], Awaitable[Response]]) -> Response:
@@ -173,19 +196,18 @@ def create_app(settings: Settings | None = None, clock: Clock = utc_now) -> Fast
 
     # --- Redirects ---------------------------------------------------------------------------------------
 
-    def not_found_page(request: Request) -> HTMLResponse:
-        return HTMLResponse(render_not_found(request.url.path), status_code=404, headers={"Cache-Control": "no-store"})
-
     @app.api_route("/redirect", methods=["GET", "HEAD"], include_in_schema=False)
-    def redirect_root(request: Request) -> Response:
-        return not_found_page(request)
+    def redirect_root() -> Response:
+        return not_found_page("")
 
     @app.api_route("/redirect/{slug:path}", methods=["GET", "HEAD"], include_in_schema=False)
-    def follow(slug: str, request: Request) -> Response:
+    def follow(request: Request) -> Response:
+        # Read the slug from the path itself: the route pattern ends with "$", which also matches before a final
+        # newline, so its parameter would turn "ok\n" into "ok"
+        slug = _route_path(request).removeprefix(REDIRECT_PREFIX)
         target = db.target_for(slug) if is_valid_slug(slug) else None
         if target is None:
-            logger.info("redirect slug=%r status=404", slug[:MAX_ECHOED_PATH])
-            return not_found_page(request)
+            return not_found_page(slug)
         # The target is logged nowhere: it may carry a token
         logger.info("redirect slug=%s status=302", slug)
         # no-store: a changed target must take effect on the very next click

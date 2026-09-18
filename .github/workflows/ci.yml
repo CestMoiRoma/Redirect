@@ -1,0 +1,140 @@
+# The same jobs as `just ci`, in the same order, in the same pinned image (test/ci/Dockerfile):
+#   image -> lint -> test:redirect -> goldens:redirect
+# Every job runs directly in the CI image built by the first job: no Docker-in-Docker.
+# Kill switch: nothing runs until the repository variable CI_ENABLED is "true". Until then, `just ci` is the gate.
+name: ci
+
+on:
+  push:
+    branches: [main, dev]
+    tags: ['v*']
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  image:
+    name: image
+    if: vars.CI_ENABLED == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      # Tagged with the commit: every later job runs in exactly this image. The layer cache is written here only.
+      - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: test
+          file: test/ci/Dockerfile
+          platforms: linux/amd64
+          push: true
+          tags: ghcr.io/cestmoiroma/redirect-ci:${{ github.sha }}
+          cache-from: type=registry,ref=ghcr.io/cestmoiroma/redirect-ci:buildcache
+          cache-to: type=registry,ref=ghcr.io/cestmoiroma/redirect-ci:buildcache,mode=max
+
+  lint:
+    name: lint
+    needs: image
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      packages: read
+    container:
+      image: ghcr.io/cestmoiroma/redirect-ci:${{ github.sha }}
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: treefmt, check only
+        run: REPO="$GITHUB_WORKSPACE" test/ci/lint.sh
+
+  test-redirect:
+    name: 'test:redirect'
+    needs: lint
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      packages: read
+    container:
+      image: ghcr.io/cestmoiroma/redirect-ci:${{ github.sha }}
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: run-tests.sh tests
+        run: |
+          mkdir -p test-reports
+          REPO="$GITHUB_WORKSPACE" PYTEST_JUNIT_DIR="$GITHUB_WORKSPACE/test-reports" \
+            test/redirect/run-tests.sh tests 2>&1 | tee test-reports/redirect.log
+      - name: JUnit report and log
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: test-redirect
+          path: test-reports/
+
+  goldens-redirect:
+    name: 'goldens:redirect'
+    needs: test-redirect
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: read
+    container:
+      image: ghcr.io/cestmoiroma/redirect-ci:${{ github.sha }}
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: run-tests.sh goldens
+        run: |
+          mkdir -p test-reports
+          REPO="$GITHUB_WORKSPACE" test/redirect/run-tests.sh goldens 2>&1 | tee test-reports/goldens-redirect.log
+      - name: Compare the goldens with the commit
+        run: test/ci/check-goldens.sh redirect
+      - name: Scenario log
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: goldens-redirect-log
+          path: test-reports/
+      - name: Regenerated goldens
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: goldens-redirect
+          path: test/screenshot/redirect/
+
+  # The app image job (build, container smoke test, publication on v* tags) comes here, after the goldens:
+  #   needs: goldens-redirect

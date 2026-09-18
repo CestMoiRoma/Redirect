@@ -237,15 +237,18 @@
     } catch (error) {
       if (!(error instanceof ApiError)) throw error
       if (error.status === 404) {
-        // The entry was deleted elsewhere: close, refresh, tell
+        // The entry was deleted elsewhere: close, refresh, tell, and keep the keyboard in the list
         form.closest('dialog')?.close()
         await reload().catch(() => {})
         setStatus(error.message, true)
+        $('#list-title').focus()
       } else {
         showErrors(form, error)
       }
     } finally {
       submit.disabled = false
+      // Disabling the focused button sent the focus to <body>: bring it back where the user was
+      if (document.activeElement === document.body) submit.focus()
     }
   }
 
@@ -273,7 +276,9 @@
     const warning = $('#edit-slug-warning')
 
     slug.addEventListener('input', () => {
-      warning.hidden = !state.editing || slug.value.trim() === state.editing.slug
+      const changed = state.editing !== null && slug.value.trim() !== state.editing.slug
+      // Text only while it applies: the field's description never carries a warning that does not hold
+      warning.textContent = changed ? t('form.slug.warning') : ''
     })
     form.addEventListener('submit', (event) => {
       event.preventDefault()
@@ -300,7 +305,7 @@
     state.editing = redirect
     clearErrors(form)
     for (const name of FIELDS) form.elements[name].value = redirect[name]
-    $('#edit-slug-warning').hidden = true
+    $('#edit-slug-warning').textContent = ''
     dialog.showModal()
     // Changing the target is the usual edit: land there, ready to paste
     form.elements.target.focus()

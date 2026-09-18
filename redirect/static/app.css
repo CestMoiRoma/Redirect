@@ -492,6 +492,18 @@ input[aria-invalid='true'] {
   font-weight: 600;
 }
 
+/* A live region stays rendered (a hidden one is not reliably announced). While empty it is taken out of
+   the grid, so it adds neither a row nor a gap */
+.warning:empty {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  border: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+}
+
 .warning {
   padding: 8px 12px;
   border: 1px solid var(--warn-border);

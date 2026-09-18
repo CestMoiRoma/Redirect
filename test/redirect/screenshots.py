@@ -459,18 +459,22 @@ def main_walk(run: Scenario, data_dir: Path) -> None:
         expect(edit_target).to_have_value("http://files.intranet.local/compta/Budget%202027.xlsx")
         expect(edit_target).to_be_focused()
         warning = dialog.locator("#edit-slug-warning")
-        expect(warning).to_be_hidden()
+        # A live region, empty (so neither shown nor part of the field's description) until the path changes
+        expect(warning).to_have_attribute("aria-live", "polite")
+        expect(warning).to_have_text("")
+        expect(edit_slug).to_have_accessible_description("")
         expect(dialog.get_by_role("button")).to_have_text(["Cancel", "Save changes"])
         run.shot(page, "10-edit", full_page=False)
 
         edit_slug.fill("compta/2027/budget")
-        expect(warning).to_have_text(
-            "Changing the path breaks the link you already shared. The old link will return “not found”."
-        )
+        slug_warning = "Changing the path breaks the link you already shared. The old link will return “not found”."
+        expect(warning).to_have_text(slug_warning)
+        expect(edit_slug).to_have_accessible_description(slug_warning)
         edit_slug.fill("compta/budget-2027")
-        expect(warning).to_be_hidden()
+        expect(warning).to_have_text("")
+        expect(edit_slug).to_have_accessible_description("")
         edit_slug.fill("compta/2027/budget")
-        expect(warning).to_be_visible()
+        expect(warning).to_have_text(slug_warning)
         edit_target.fill("http://files.intranet.local/compta/2027/Budget.xlsx")
         run.shot(page, "11-edit-slug-warning", full_page=False)
 
@@ -482,7 +486,7 @@ def main_walk(run: Scenario, data_dir: Path) -> None:
             expect(dialog.locator("#edit-target-error")).to_have_text(TARGET_INVALID)
         expect(dialog).to_be_visible()
         expect(edit_target).to_be_focused()
-        expect(warning).to_be_visible()
+        expect(warning).to_have_text(slug_warning)
         edit_target.fill("http://files.intranet.local/compta/2027/Budget.xlsx")
         save.click()
         expect(dialog).to_be_hidden()

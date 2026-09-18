@@ -101,7 +101,9 @@ def create_app(settings: Settings | None = None, clock: Clock = utc_now) -> Fast
         try:
             validate_target(settings.public_base_url)
         except PydanticCustomError:
-            raise ValueError(f"PUBLIC_BASE_URL must be an http:// or https:// URL, got {settings.public_base_url!r}") from None
+            raise ValueError(
+                f"PUBLIC_BASE_URL must be an http:// or https:// URL, got {settings.public_base_url!r}"
+            ) from None
     configure_logging(settings.log_level)
     db = Database(settings.db_path, clock)
 

@@ -1,0 +1,9 @@
+# The app image needs the app package, its packaging metadata and its lock: everything else stays out
+# (tests, goldens, CI files, local data, virtual environments).
+*
+!redirect/
+!pyproject.toml
+!README.md
+!requirements.lock
+**/__pycache__
+**/*.py[cod]

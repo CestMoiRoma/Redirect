@@ -1,14 +1,40 @@
 # Redirect task runner
 #
 # Lint, tests and GUI goldens always run in the pinned CI image (test/ci/Dockerfile), never on the host.
+# The app image (root Dockerfile) is another image: what users run.
 # `just ci` runs exactly what CI runs, in the same order: while CI has no runner, it is the gate.
 
 ci_image := env("CI_IMAGE", "redirect-ci:local")
 ci_platform := "linux/amd64"
+app_image := "redirect:local"
+# uv with Python 3.12, pinned by digest: exports requirements.lock from uv.lock (just app-lock)
+uv_image := "ghcr.io/astral-sh/uv:0.11.16-python3.12-trixie-slim@sha256:438bad5bb636f6cc60765ed25f294c74dd896e6d14b2093c3467a37b5d03a78a"
 
 # Run the app natively with auto-reload, data in ./data, on $PORT (8080)
 run:
     DATA_DIR="${DATA_DIR:-./data}" uv run uvicorn redirect.main:app --reload --host 127.0.0.1 --port "${PORT:-8080}"
+
+# Build the app image for the host's platform, tagged redirect:local
+image:
+    docker build --tag {{ app_image }} .
+
+# Run the app image with compose (compose.yaml) and wait until it is healthy, on http://localhost:8080
+up: image
+    REDIRECT_IMAGE={{ app_image }} docker compose up --detach --wait
+
+# Stop and remove the compose container; the data volume stays
+down:
+    REDIRECT_IMAGE={{ app_image }} docker compose down
+
+# Regenerate requirements.lock (the app image's dependencies, with hashes) from uv.lock, offline
+app-lock:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    lock="$(docker run --rm --network none --user "$(id -u):$(id -g)" --tmpfs /tmp:mode=1777 \
+      -e UV_CACHE_DIR=/tmp/uv-cache -e UV_PROJECT_ENVIRONMENT=/tmp/venv -e UV_PYTHON_DOWNLOADS=never \
+      -v "$PWD":/src:ro -w /src {{ uv_image }} \
+      uv export --quiet --locked --offline --no-dev --no-emit-project --no-header --format requirements.txt)"
+    { echo "# Runtime closure of the app image, exported from uv.lock by just app-lock: do not edit."; echo "$lock"; } > requirements.lock
 
 # Build (or pull, when CI_IMAGE is set) the CI image
 ci-image:

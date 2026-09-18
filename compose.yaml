@@ -1,0 +1,25 @@
+# Redirect in one command: docker compose up -d
+# The interface is then at http://<this host>:8080/ and the links at http://<this host>:8080/redirect/<path>.
+# Redirections live in the named volume below: they survive restarts, upgrades and `docker compose down`.
+services:
+  redirect:
+    # A released image; pin a version (ghcr.io/cestmoiroma/redirect:0.1.0) to upgrade on your own terms.
+    # REDIRECT_IMAGE runs another one, e.g. redirect:local built from this repository by `just image`.
+    image: ${REDIRECT_IMAGE:-ghcr.io/cestmoiroma/redirect:latest}
+    restart: unless-stopped
+    ports:
+      - '8080:8080'
+    volumes:
+      - redirect-data:/data
+    # environment:
+    #   # Base of the public links the interface shows and copies. Unset, links follow the address the
+    #   # browser used to reach Redirect, which is right on a LAN. Set it when that address is not the one
+    #   # to share: another published port, a DNS name, or a reverse proxy serving HTTPS.
+    #   PUBLIC_BASE_URL: https://go.example.org
+    #   # Addresses whose X-Forwarded-* headers are trusted (scheme and client IP). The default trusts the
+    #   # loopback only, so a reverse proxy in another container is ignored: links then stay http://.
+    #   # Set it to the proxy's address, or set PUBLIC_BASE_URL above, which always wins.
+    #   FORWARDED_ALLOW_IPS: 172.18.0.2
+
+volumes:
+  redirect-data:

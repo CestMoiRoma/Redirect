@@ -1,6 +1,8 @@
 """The public link: GET /redirect/{slug} answers 302 to the target, or the 404 page. Never 500."""
 
 import asyncio
+import logging
+from collections.abc import Iterator
 from urllib.parse import unquote
 
 import pytest
@@ -59,6 +61,21 @@ def get_raw(client, raw_path: bytes, method: str = "GET") -> RawResponse:
 
 
 @pytest.fixture
+def redirect_log() -> Iterator[list[str]]:
+    """Messages of the "redirect" logger (it does not propagate, so caplog would not see them)."""
+    messages: list[str] = []
+
+    class Collect(logging.Handler):
+        def emit(self, record: logging.LogRecord) -> None:
+            messages.append(record.getMessage())
+
+    handler = Collect()
+    logging.getLogger("redirect").addHandler(handler)
+    yield messages
+    logging.getLogger("redirect").removeHandler(handler)
+
+
+@pytest.fixture
 def budget(client):
     return create(client, "compta/budget-2026", target="http://files.intranet.local/compta/Budget%202026.xlsx")
 
@@ -97,6 +114,31 @@ def test_non_ascii_target_is_sent_percent_encoded(client):
     create(client, "livres", target="https://bücher.example/été")
     response = client.get("/redirect/livres", follow_redirects=False)
     assert response.headers["location"] == "https://xn--bcher-kva.example/%C3%A9t%C3%A9"
+
+
+def test_each_redirect_writes_one_log_line_without_the_target(client, redirect_log):
+    create(client, "wiki", target="http://w.local/start?token=s3cret")
+    redirect_log.clear()
+    client.get("/redirect/wiki", follow_redirects=False)
+    client.get("/redirect/nope", follow_redirects=False)
+    client.get("/redirect/a%20b", follow_redirects=False)
+    assert redirect_log == [
+        "redirect slug=wiki status=302",
+        "redirect slug='nope' status=404",
+        "redirect slug='a b' status=404",
+    ]
+
+
+def test_the_target_is_never_logged(client, redirect_log):
+    created = create(client, "wiki", target="http://w.local/start?token=s3cret")
+    client.put(
+        f"/api/redirects/{created['id']}",
+        json={"slug": "wiki", "name": "Wiki", "target": "http://w.local/next?token=s3cret"},
+    )
+    client.get("/redirect/wiki", follow_redirects=False)
+    client.delete(f"/api/redirects/{created['id']}")
+    assert redirect_log, "nothing was logged"
+    assert not [message for message in redirect_log if "s3cret" in message or "w.local" in message]
 
 
 def test_unknown_slug_is_the_404_page(client, budget):

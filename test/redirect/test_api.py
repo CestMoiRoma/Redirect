@@ -291,12 +291,18 @@ def test_create_ignores_unknown_fields(client):
         (b"", {"Content-Type": "application/json"}),
         (b'["a", "b"]', {"Content-Type": "application/json"}),
         (b"slug=a&name=b", {"Content-Type": "application/x-www-form-urlencoded"}),
+        # What a cross-site form or a "simple" fetch can send without a CORS preflight: refused, so another
+        # site cannot create redirects through a visitor's browser
+        (json.dumps(BUDGET).encode(), {"Content-Type": "text/plain;charset=UTF-8"}),
+        (json.dumps(BUDGET).encode(), {"Content-Type": "multipart/form-data; boundary=x"}),
+        (json.dumps(BUDGET).encode(), {}),
     ],
 )
 def test_create_with_a_body_that_is_not_a_json_object(client, content, headers):
     response = client.post("/api/redirects", content=content, headers=headers)
     assert response.status_code == 422
     assert response.json() == {"detail": "The request body is not valid JSON.", "errors": {}}
+    assert client.get("/api/redirects").json()["redirects"] == []
 
 
 BODY_TOO_LARGE = {"detail": "The request body is too large.", "errors": {}}

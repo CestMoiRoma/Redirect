@@ -60,6 +60,8 @@ SHOTS = (
     "17-load-error",
     "18-not-found",
     "19-target",
+    "20-create-error",
+    "21-edit-gone",
 )
 
 # Web fonts each kind of page must have loaded (and so rendered with) when captured
@@ -185,11 +187,18 @@ class Watch:
         Chromium logs every non-2xx response as a console error. Each expected one is declared here, by URL
         and status, and must happen; anything else still fails the scenario.
         """
-        entry = {
-            "url": url,
-            "text": f"Failed to load resource: the server responded with a status of {status} ",
-            "seen": False,
-        }
+        with self._expect(page, url, f"Failed to load resource: the server responded with a status of {status} "):
+            yield
+
+    @contextmanager
+    def network_error(self, page: Page, url: str) -> Iterator[None]:
+        """Inside the block, Chromium must log one request to `url` that failed without a response."""
+        with self._expect(page, url, "Failed to load resource: net::ERR_FAILED"):
+            yield
+
+    @contextmanager
+    def _expect(self, page: Page, url: str, text: str) -> Iterator[None]:
+        entry = {"url": url, "text": text, "seen": False}
         self._expected.append(entry)
         try:
             yield
@@ -197,7 +206,7 @@ class Watch:
             while not entry["seen"] and time.monotonic() < deadline:
                 page.wait_for_timeout(50)
             if not entry["seen"]:
-                raise AssertionError(f"expected a {status} console error for {url}")
+                raise AssertionError(f"expected the console error {text!r} for {url}")
         finally:
             self._expected.remove(entry)
 
@@ -312,6 +321,15 @@ def expect_rows(page: Page, rows: tuple[tuple[str, str, str], ...]) -> None:
         expect(item.get_by_role("button", name=f"Copy link: {name}", exact=True)).to_have_text("Copy link")
         expect(item.get_by_role("button", name=f"Edit: {name}", exact=True)).to_have_text("Edit")
         expect(item.get_by_role("button", name=f"Delete: {name}", exact=True)).to_have_text("Delete")
+
+
+def assert_no_horizontal_overflow(page: Page, where: str) -> None:
+    """Nothing makes the page, or an open dialog, wider than the viewport."""
+    page_width, viewport = page.evaluate("() => [document.documentElement.scrollWidth, window.innerWidth]")
+    assert page_width <= viewport, f"{where}: the page is {page_width}px wide in a {viewport}px viewport"
+    for dialog in page.locator("dialog[open]").all():
+        scroll, client = dialog.evaluate("(d) => [d.scrollWidth, d.clientWidth]")
+        assert scroll == client, f"{where}: an open dialog scrolls sideways ({scroll}px in {client}px)"
 
 
 def assert_aligned(page: Page, selector: str, reference: str) -> None:
@@ -623,6 +641,105 @@ def main_walk(run: Scenario, data_dir: Path) -> None:
         expect(landed).to_have_url("http://wiki.intranet.local/home")
         expect(landed.locator("code")).to_have_text("http://wiki.intranet.local/home")
         landed.close()
+        wiki_home = (*FIXTURE_ROWS[2][:2], "http://wiki.intranet.local/home")
+        rows = (*FIXTURE_ROWS[:2], wiki_home)
+        expect_rows(page, rows)
+
+        # --- Creating while the server cannot be reached: the error shows in the form, the focus stays there
+        slug.fill("compta/budget-2028")
+        name.fill("Budget 2028")
+        target.fill("http://files.intranet.local/compta/Budget%202028.xlsx")
+        page.route(api, lambda route: route.abort() if route.request.method == "POST" else route.fallback())
+        with run.watch.network_error(page, api):
+            submit.click()
+            expect(form.locator(".form-error")).to_have_text("Could not reach the server. Try again.")
+        expect(form.locator(".form-error")).to_have_attribute("role", "alert")
+        for error in errors.values():
+            expect(error).to_be_hidden()
+        expect(submit).to_be_enabled()
+        expect(submit).to_be_focused()
+        expect_rows(page, rows)
+        run.shot(page, "20-create-error")
+        page.unroute(api)
+
+        # A response without an API message (a proxy's 500 page) is a server error, not an unreachable server
+        page.route(
+            api,
+            lambda route: (
+                route.fulfill(status=500, content_type="text/plain", body="Internal Server Error")
+                if route.request.method == "POST"
+                else route.fallback()
+            ),
+        )
+        with run.watch.http_error(page, api, 500):
+            submit.click()
+            expect(form.locator(".form-error")).to_have_text("The server could not complete the request. Try again.")
+        expect(submit).to_be_focused()
+        page.unroute(api)
+        submit.click()
+        expect(status).to_have_text("Redirect “Budget 2028” created.")
+        expect(form.locator(".form-error")).to_be_hidden()
+        rows = (
+            FIXTURE_ROWS[0],
+            ("Budget 2028", "compta/budget-2028", "http://files.intranet.local/compta/Budget%202028.xlsx"),
+            *rows[1:],
+        )
+        expect_rows(page, rows)
+
+        # --- The entry being edited is deleted elsewhere: the dialog closes, the list and the status tell
+        items.nth(3).get_by_role("button", name="Edit: Team wiki").click()
+        expect(dialog).to_be_visible()
+        assert page.request.delete(base + "/api/redirects/3").status == 204
+        with run.watch.http_error(page, base + "/api/redirects/3", 404):
+            dialog.get_by_role("button", name="Save changes").click()
+            expect(status).to_have_text("This redirect no longer exists.")
+        expect(dialog).to_be_hidden()
+        expect(status).to_have_class("status status-error")
+        rows = rows[:3]
+        expect_rows(page, rows)
+        expect(page.locator("#count")).to_have_text("3 redirects")
+        # The error is about another entry: the last created one is no longer highlighted
+        expect(page.locator("#list .item.is-new")).to_have_count(0)
+        expect(page.locator("#list-title")).to_be_focused()
+        run.shot(page, "21-edit-gone")
+
+        # The same for a delete: the entry is already gone, the status says so, the list catches up
+        items.nth(2).get_by_role("button", name="Delete: Redirect api").click()
+        expect(delete_dialog).to_be_visible()
+        assert page.request.delete(base + "/api/redirects/2").status == 204
+        # Budget 2028 goes too (id 5: Budget 2027, id 4, was deleted above), leaving a single entry
+        assert page.request.delete(base + "/api/redirects/5").status == 204
+        with run.watch.http_error(page, base + "/api/redirects/2", 404):
+            delete_dialog.get_by_role("button", name="Delete").click()
+            expect(status).to_have_text("This redirect no longer exists.")
+        expect(delete_dialog).to_be_hidden()
+        expect(status).to_have_class("status status-error")
+        expect_rows(page, FIXTURE_ROWS[:1])
+        # One entry left: the count is singular
+        expect(page.locator("#count")).to_have_text("1 redirect")
+        expect(page.locator("#list-title")).to_be_focused()
+
+        # --- User text of any length never widens the page, nor a dialog
+        assert_no_horizontal_overflow(page, "the list")
+        long_name = "Quarterly" + "N" * 91
+        slug.fill("long")
+        name.fill(long_name)
+        target.fill("http://files.intranet.local/" + "a" * 300)
+        submit.click()
+        expect(status).to_have_text(f"Redirect “{long_name}” created.")
+        expect(items).to_have_count(2)
+        assert_no_horizontal_overflow(page, "a 100-character name")
+        search.fill("http://files.intranet.local/compta/Budget%202027.xlsx")
+        expect(page.locator("#no-match")).to_be_visible()
+        assert_no_horizontal_overflow(page, "a long filter without spaces")
+        search.fill("")
+        items.nth(1).get_by_role("button", name=f"Delete: {long_name}").click()
+        expect(delete_dialog.locator("#delete-name")).to_have_text(long_name)
+        assert_no_horizontal_overflow(page, "the delete dialog of a 100-character name")
+        delete_dialog.get_by_role("button", name="Keep it").click()
+        items.nth(1).get_by_role("button", name=f"Edit: {long_name}").click()
+        assert_no_horizontal_overflow(page, "the edit dialog of a 100-character name")
+        page.keyboard.press("Escape")
 
         page.context.close()
 

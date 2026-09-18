@@ -4,6 +4,7 @@ import html
 import logging
 import mimetypes
 import re
+import sqlite3
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -29,7 +30,8 @@ from .models import (
 from .strings import t
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
-NOT_FOUND_TEMPLATE = STATIC_DIR / "404.html"
+# Template of the server-rendered pages (404, 503)
+PAGE_TEMPLATE = STATIC_DIR / "page.html"
 # Python < 3.13 does not know the web font type: StaticFiles would serve application/octet-stream
 mimetypes.add_type("font/woff2", ".woff2")
 # Longest path echoed back on the 404 page and in the logs
@@ -91,11 +93,33 @@ def configure_logging(level: str) -> None:
     logger.setLevel(level)
 
 
+def render_page(title: str, text: str) -> str:
+    """A server-rendered page: texts come from strings.json, every inserted value is HTML-escaped."""
+    values = {"title": title, "text": text, "back": t("page.back")}
+    template = PAGE_TEMPLATE.read_text(encoding="utf-8")
+    return _TEMPLATE_KEY.sub(lambda m: html.escape(values[m.group(1)]), template)
+
+
 def render_not_found(path: str) -> str:
-    """The 404 page: every text from strings.json, every inserted value HTML-escaped."""
     shown = path if len(path) <= MAX_ECHOED_PATH else path[:MAX_ECHOED_PATH] + "…"
-    template = NOT_FOUND_TEMPLATE.read_text(encoding="utf-8")
-    return _TEMPLATE_KEY.sub(lambda m: html.escape(t(m.group(1), path=shown)), template)
+    return render_page(t("notfound.title"), t("notfound.text", path=shown))
+
+
+def _is_redirect_path(path: str) -> bool:
+    return path == "/redirect" or path.startswith("/redirect/")
+
+
+async def _database_error(request: Request, exc: Exception) -> Response:
+    """The database is locked, gone or broken: 503, as a page for the public links, as JSON for the API."""
+    path = request.url.path
+    logger.error("database error on %s: %s", path[:MAX_ECHOED_PATH], exc)
+    headers = {"Cache-Control": "no-store", "Retry-After": "5"}
+    if _is_redirect_path(path):
+        page = render_page(t("unavailable.title"), t("unavailable.text"))
+        return HTMLResponse(page, status_code=503, headers=headers)
+    response = _error(503, t("errors.database_unavailable"))
+    response.headers.update(headers)
+    return response
 
 
 def create_app(settings: Settings | None = None, clock: Clock = utc_now) -> FastAPI:
@@ -128,6 +152,7 @@ def create_app(settings: Settings | None = None, clock: Clock = utc_now) -> Fast
     app.state.settings = settings
     app.state.db = db
     app.add_exception_handler(RequestValidationError, _validation_error)
+    app.add_exception_handler(sqlite3.Error, _database_error)
 
     @app.middleware("http")
     async def security_headers(request: Request, call_next: Callable[[Request], Awaitable[Response]]) -> Response:

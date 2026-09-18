@@ -45,11 +45,13 @@
   "status.copy_failed": "Could not copy the link. Select it in the list and copy it by hand.",
   "status.load_failed": "Could not load the redirects. Reload the page to try again.",
   "status.network": "Could not reach the server. Try again.",
+  "status.server_error": "The server could not complete the request. Try again.",
 
   "errors.body_invalid": "The request body is not valid JSON.",
   "errors.fields_invalid": "Some fields are invalid.",
   "errors.value_invalid": "This value is not valid.",
   "errors.not_found": "This redirect no longer exists.",
+  "errors.database_unavailable": "The database cannot be reached right now. Try again in a moment.",
   "errors.slug_required": "Enter a path.",
   "errors.slug_too_long": "The path must be at most 255 characters.",
   "errors.slug_empty_segment": "The path cannot start or end with /, or contain //.",
@@ -65,5 +67,8 @@
 
   "notfound.title": "Link not found",
   "notfound.text": "No redirect exists for {path}. The link may have been changed or removed.",
-  "notfound.back": "Open Redirect"
+  "unavailable.title": "Redirect is unavailable",
+  "unavailable.text": "The database cannot be reached right now. Try the link again in a moment.",
+
+  "page.back": "Open Redirect"
 }

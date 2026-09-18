@@ -158,6 +158,33 @@ def test_the_404_page_shortens_very_long_paths(client):
 
 
 def test_the_404_page_does_not_substitute_braces_from_the_path(client):
-    response = get_raw(client, b"/redirect/%7Bpath%7D%7B%7Bnotfound.title%7D%7D")
+    response = get_raw(client, b"/redirect/%7Bpath%7D%7B%7Btitle%7D%7D")
     assert response.status_code == 404
-    assert not_found_text("/redirect/{path}{{notfound.title}}") in response.text
+    assert not_found_text("/redirect/{path}{{title}}") in response.text
+
+
+# --- The database cannot be reached ---------------------------------------------------------------------
+
+UNAVAILABLE_TITLE = "<title>Redirect is unavailable</title>"
+UNAVAILABLE_TEXT = "<p>The database cannot be reached right now. Try the link again in a moment.</p>"
+
+
+def test_a_locked_database_answers_503_on_a_public_link(client, budget, locked_database):
+    response = client.get("/redirect/compta/budget-2026", follow_redirects=False)
+    assert response.status_code == 503
+    assert response.headers["content-type"] == "text/html; charset=utf-8"
+    assert response.headers["cache-control"] == "no-store"
+    assert response.headers["retry-after"] == "5"
+    assert response.headers["x-content-type-options"] == "nosniff"
+    assert UNAVAILABLE_TITLE in response.text
+    assert UNAVAILABLE_TEXT in response.text
+    assert '<a class="button primary" href="/">Open Redirect</a>' in response.text
+
+
+def test_a_missing_database_answers_503_and_is_not_recreated(client, budget, tmp_path):
+    database = tmp_path / "data" / "redirect.db"
+    database.unlink()
+    response = client.get("/redirect/compta/budget-2026", follow_redirects=False)
+    assert response.status_code == 503
+    assert UNAVAILABLE_TEXT in response.text
+    assert not database.exists()

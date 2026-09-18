@@ -27,10 +27,40 @@ def test_health(client):
 
 
 def test_health_reports_an_unreachable_database(client, tmp_path):
-    (tmp_path / "data" / "redirect.db").unlink()
+    database = tmp_path / "data" / "redirect.db"
+    database.unlink()
     response = client.get("/api/health")
     assert response.status_code == 503
     assert response.json() == {"status": "unavailable"}
+    # At run time a missing database is reported, never replaced by a new empty one
+    assert not database.exists()
+
+
+DATABASE_UNAVAILABLE = {"detail": "The database cannot be reached right now. Try again in a moment.", "errors": {}}
+
+
+@pytest.mark.parametrize(
+    ("method", "path", "body"),
+    [
+        ("GET", "/api/redirects", None),
+        ("POST", "/api/redirects", BUDGET),
+        ("PUT", "/api/redirects/1", BUDGET),
+        ("DELETE", "/api/redirects/1", None),
+    ],
+)
+def test_a_locked_database_answers_503_on_the_api(client, locked_database, method, path, body):
+    response = client.request(method, path, json=body)
+    assert response.status_code == 503
+    assert response.json() == DATABASE_UNAVAILABLE
+    assert response.headers["retry-after"] == "5"
+    assert response.headers["x-content-type-options"] == "nosniff"
+
+
+def test_a_missing_database_answers_503_on_the_api(client, tmp_path):
+    (tmp_path / "data" / "redirect.db").unlink()
+    response = client.get("/api/redirects")
+    assert response.status_code == 503
+    assert response.json() == DATABASE_UNAVAILABLE
 
 
 def test_index_serves_the_single_page_ui(client):

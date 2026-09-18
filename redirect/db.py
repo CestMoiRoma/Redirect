@@ -74,9 +74,13 @@ class Database:
         self.clock = clock
 
     @contextmanager
-    def _connect(self) -> Iterator[sqlite3.Connection]:
-        """A connection inside one transaction: committed on success, rolled back on error, always closed."""
-        conn = sqlite3.connect(self.path, timeout=BUSY_TIMEOUT_SECONDS)
+    def _connect(self, create: bool = False) -> Iterator[sqlite3.Connection]:
+        """A connection inside one transaction: committed on success, rolled back on error, always closed.
+
+        Only migrate() may create the file: at run time a missing database is an error, never a new empty one.
+        """
+        uri = f"{self.path.resolve().as_uri()}?mode={'rwc' if create else 'rw'}"
+        conn = sqlite3.connect(uri, uri=True, timeout=BUSY_TIMEOUT_SECONDS)
         with closing(conn):
             conn.row_factory = sqlite3.Row
             with conn:
@@ -86,7 +90,7 @@ class Database:
         """Create the data directory and the database if needed, then apply pending migrations."""
         try:
             self.path.parent.mkdir(parents=True, exist_ok=True)
-            with self._connect() as conn:
+            with self._connect(create=True) as conn:
                 # Explicit transaction: DDL would otherwise autocommit, and a second process waits here
                 conn.execute("BEGIN IMMEDIATE")
                 version: int = conn.execute("PRAGMA user_version").fetchone()[0]

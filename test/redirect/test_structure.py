@@ -165,13 +165,20 @@ def test_index_html_keys_exist():
     assert keys <= STRINGS.keys(), sorted(keys - STRINGS.keys())
 
 
-def test_404_html_text_is_only_placeholders():
-    page = collect("404.html")
-    placeholders = re.compile(r"\{\{\s*([\w.]+)\s*\}\}")
+# The server-rendered page (404, 503) has three slots, filled by main.render_page with texts from strings.json
+PAGE_PLACEHOLDERS = {"title", "text", "back"}
+
+
+def test_page_html_text_is_only_placeholders():
+    page = collect("page.html")
+    placeholders = re.compile(r"\{\{\s*(\w+)\s*\}\}")
     assert page.attributes == []
+    found = set()
     for text in page.texts:
-        assert placeholders.fullmatch(text), f"literal text in 404.html: {text!r}"
-        assert placeholders.fullmatch(text).group(1) in STRINGS
+        match = placeholders.fullmatch(text)
+        assert match, f"literal text in page.html: {text!r}"
+        found.add(match.group(1))
+    assert found == PAGE_PLACEHOLDERS
 
 
 def js_source() -> str:
@@ -208,9 +215,8 @@ def test_backend_keys_exist():
 
 
 def test_every_text_is_used():
-    used = collect("index.html").keys | collect("404.html").keys | python_keys()
+    used = collect("index.html").keys | python_keys()
     used |= set(re.findall(r"""\bt\(\s*'([\w.]+)'""", js_source()))
-    used |= {m.strip() for m in re.findall(r"\{\{([^}]+)\}\}", (STATIC / "404.html").read_text(encoding="utf-8"))}
     assert set(STRINGS) - used == set()
 
 

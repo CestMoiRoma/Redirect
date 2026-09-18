@@ -588,7 +588,7 @@ def main_walk(run: Scenario, data_dir: Path) -> None:
         assert response is not None and response.status == 404
         expect(page).to_have_title("Link not found")
         expect(page.get_by_role("heading", level=1)).to_have_text("Link not found")
-        expect(page.locator(".notfound p")).to_have_text(
+        expect(page.locator(".standalone p")).to_have_text(
             "No redirect exists for /redirect/compta/budget-2027. The link may have been changed or removed."
         )
         back = page.get_by_role("link", name="Open Redirect")

@@ -63,7 +63,7 @@
       data = null
     }
     if (!response.ok) {
-      throw new ApiError(response.status, (data && data.detail) || t('status.network'), data && data.errors)
+      throw new ApiError(response.status, (data && data.detail) || t('status.server_error'), data && data.errors)
     }
     return data
   }

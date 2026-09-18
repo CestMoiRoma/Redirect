@@ -35,6 +35,11 @@ command = "python3"
 options = ["test/ci/check_json.py"]
 includes = ["*.json"]
 
+[formatter.prose]                # no em or en dash in Markdown; checked, never rewritten
+command = "python3"
+options = ["test/ci/check_prose.py"]
+includes = ["*.md"]
+
 [formatter.typecheck]            # mypy --strict on the app package (checks the whole package, whatever the file)
 command = "test/ci/typecheck.sh"
 includes = ["redirect/*.py"]

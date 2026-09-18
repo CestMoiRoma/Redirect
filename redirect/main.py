@@ -134,6 +134,9 @@ def create_app(settings: Settings | None = None, clock: Clock = utc_now) -> Fast
         response = await call_next(request)
         for name, value in SECURITY_HEADERS.items():
             response.headers.setdefault(name, value)
+        if request.url.path.startswith("/static/"):
+            # Revalidate on every load (a 304 on a LAN): after an upgrade, the page never mixes old and new files
+            response.headers.setdefault("Cache-Control", "no-cache")
         return response
 
     def base_url(request: Request) -> str:

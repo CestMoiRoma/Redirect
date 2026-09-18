@@ -56,6 +56,8 @@ def test_static_files_are_served(client, path, content_type):
     response = client.get(path)
     assert response.status_code == 200
     assert response.headers["content-type"] == content_type
+    # Revalidated on every load: after an upgrade, index.html never runs with an older app.js or strings.json
+    assert response.headers["cache-control"] == "no-cache"
 
 
 def test_unknown_static_file_is_404(client):

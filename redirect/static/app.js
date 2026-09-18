@@ -92,15 +92,22 @@
     )
   }
 
+  // A URL as text nodes with a line-break opportunity after each "/" of its path (not inside "://"),
+  // so a long URL wraps between segments rather than in the middle of a word
+  function breakableUrl(url) {
+    const parts = url.split(/(?<=[^/:]\/)/)
+    return parts.flatMap((part, index) => (index ? [document.createElement('wbr'), part] : [part]))
+  }
+
   function renderItem(redirect) {
     const item = $('#item-template').content.firstElementChild.cloneNode(true)
     item.dataset.id = String(redirect.id)
     item.classList.toggle('is-new', redirect.id === state.highlightId)
     const link = $('.link', item)
     link.href = redirect.public_url
-    link.textContent = redirect.public_url
+    link.replaceChildren(...breakableUrl(redirect.public_url))
     $('.item-name', item).textContent = redirect.name
-    $('.target-url', item).textContent = redirect.target
+    $('.target-url', item).replaceChildren(...breakableUrl(redirect.target))
     $('[data-action="copy"]', item).setAttribute('aria-label', t('list.copy.aria', { name: redirect.name }))
     $('[data-action="edit"]', item).setAttribute('aria-label', t('list.edit.aria', { name: redirect.name }))
     $('[data-action="delete"]', item).setAttribute('aria-label', t('list.delete.aria', { name: redirect.name }))

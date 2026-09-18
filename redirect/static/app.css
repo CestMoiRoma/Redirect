@@ -52,6 +52,9 @@
   --muted: #56606c;
   --border: #d7dce3;
   --border-strong: #b9c1cc;
+  /* Borders that alone show where a field is: at least 3:1 on white and on --bg */
+  --field-border: #858f9c;
+  --field-border-hover: #6b7582;
   --accent: #1d5bb8;
   --accent-hover: #174a96;
   --accent-soft: #e7effb;
@@ -96,8 +99,7 @@ p {
   display: none !important;
 }
 
-.visually-hidden,
-.target-label {
+.visually-hidden {
   position: absolute;
   width: 1px;
   height: 1px;
@@ -150,6 +152,8 @@ p {
 
 .layout {
   display: grid;
+  /* minmax(0, ...): a long unbreakable name or filter text wraps instead of widening the page */
+  grid-template-columns: minmax(0, 1fr);
   gap: 24px;
   padding-bottom: 40px;
 }
@@ -313,8 +317,8 @@ h2 {
 }
 
 .item-link {
-  display: flex;
-  flex-wrap: wrap;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
   gap: 6px 12px;
 }
@@ -335,6 +339,14 @@ h2 {
   font-weight: 600;
 }
 
+/* User text of any length: names, filter queries echoed back, status messages */
+.item-name,
+.delete-name,
+.status,
+.empty {
+  overflow-wrap: anywhere;
+}
+
 .item-target {
   margin-top: 2px;
   color: var(--muted);
@@ -342,10 +354,11 @@ h2 {
   overflow-wrap: anywhere;
 }
 
-/* On the URL itself, joined by a no-break space: the arrow never ends a line on its own */
-.target-url::before {
-  content: '→\00a0';
-  font-family: var(--font);
+.target-label {
+  margin-right: 6px;
+  font: 600 11px/1.45 var(--font);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
 }
 
 .item-actions {
@@ -358,8 +371,12 @@ h2 {
     padding: 0 14px;
   }
 
-  .item {
+  .item,
+  .item-link {
     grid-template-columns: minmax(0, 1fr);
+  }
+
+  .item {
     gap: 12px;
   }
 
@@ -438,7 +455,7 @@ input[type='search'] {
   width: 100%;
   min-height: 40px;
   padding: 8px 11px;
-  border: 1px solid var(--border-strong);
+  border: 1px solid var(--field-border);
   border-radius: 8px;
   background: var(--surface);
   color: var(--text);
@@ -452,7 +469,7 @@ input[name='target'] {
 }
 
 input:hover {
-  border-color: #8e99a8;
+  border-color: var(--field-border-hover);
 }
 
 input[aria-invalid='true'] {
@@ -467,7 +484,7 @@ input[aria-invalid='true'] {
 
 .prefix {
   padding: 5px 11px;
-  border: 1px solid var(--border-strong);
+  border: 1px solid var(--field-border);
   border-bottom: 0;
   border-radius: 8px 8px 0 0;
   background: #eef1f5;

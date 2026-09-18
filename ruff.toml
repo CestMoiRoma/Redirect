@@ -1,0 +1,8 @@
+line-length = 120
+target-version = "py312"
+
+[lint]
+select = ["E", "W", "F", "B"]  # pycodestyle, pyflakes, bugbear: widen later, one rule set at a time
+ignore = [
+  "E501",                      # the formatter wraps code; long strings and comments remain
+]

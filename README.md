@@ -35,7 +35,7 @@ The interface is then at `http://<host>:8080/` and the links at `http://<host>:8
 | `PORT`                | `8080`          | Port the server listens on inside the container. Publish that port if you change it.                             |
 | `DATA_DIR`            | `/data`         | Folder of `redirect.db`. The server runs as uid 10001, which must be able to write there.                        |
 | `PUBLIC_BASE_URL`     | unset           | Base of the links the interface shows, e.g. `https://go.example.org`. Unset, links follow the browser's address. |
-| `LOG_LEVEL`           | `INFO`          | `DEBUG`, `INFO`, `WARNING` or `ERROR`.                                                                           |
+| `LOG_LEVEL`           | `INFO`          | `DEBUG`, `INFO`, `WARNING`, `ERROR` or `CRITICAL`.                                                               |
 | `FORWARDED_ALLOW_IPS` | `127.0.0.1,::1` | Addresses whose `X-Forwarded-Proto` and `X-Forwarded-For` headers are trusted.                                   |
 
 ### Behind a reverse proxy

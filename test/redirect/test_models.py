@@ -1,5 +1,10 @@
 """Unit tests: slug, name and target validation, public link construction, configuration, texts."""
 
+import os
+import subprocess
+import sys
+from pathlib import Path
+
 import pytest
 from pydantic import ValidationError
 from pydantic_core import PydanticCustomError
@@ -266,6 +271,57 @@ def test_settings_reject_a_non_integer_port():
     with pytest.raises(ValueError) as info:
         Settings.from_env({"PORT": "80a"})
     assert str(info.value) == "PORT must be an integer, got '80a'"
+
+
+@pytest.mark.parametrize(("port", "message"), [("0", "got 0"), ("65536", "got 65536"), ("-80", "got -80")])
+def test_settings_reject_a_port_out_of_range(port, message):
+    with pytest.raises(ValueError) as info:
+        Settings.from_env({"PORT": port})
+    assert str(info.value) == f"PORT must be between 1 and 65535, {message}"
+
+
+@pytest.mark.parametrize("level", ["DEBUG", "info", " Warning ", "ERROR", "critical"])
+def test_settings_accept_the_log_levels_of_logging_and_uvicorn(level):
+    assert Settings.from_env({"LOG_LEVEL": level}).log_level == level.strip().upper()
+
+
+@pytest.mark.parametrize("level", ["verbose", "warn", "trace", "10"])
+def test_settings_reject_an_unknown_log_level(level):
+    with pytest.raises(ValueError) as info:
+        Settings.from_env({"LOG_LEVEL": level})
+    assert str(info.value) == f"LOG_LEVEL must be one of DEBUG, INFO, WARNING, ERROR, CRITICAL, got {level!r}"
+
+
+@pytest.mark.parametrize(
+    ("variable", "value", "message"),
+    [
+        (
+            "LOG_LEVEL",
+            "verbose",
+            "redirect: LOG_LEVEL must be one of DEBUG, INFO, WARNING, ERROR, CRITICAL, got 'verbose'",
+        ),
+        ("PORT", "70000", "redirect: PORT must be between 1 and 65535, got 70000"),
+        (
+            "PUBLIC_BASE_URL",
+            "files.lan",
+            "redirect: PUBLIC_BASE_URL must be an http:// or https:// URL, got 'files.lan'",
+        ),
+    ],
+)
+def test_the_server_reports_a_bad_configuration_in_one_line(tmp_path, variable, value, message):
+    env = {**os.environ, "DATA_DIR": str(tmp_path), variable: value}
+    result = subprocess.run(
+        [sys.executable, "-m", "redirect"],
+        cwd=Path(__file__).resolve().parents[2],
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=60,
+        check=False,
+    )
+    assert result.returncode == 1
+    assert result.stderr == message + "\n"
+    assert not any(tmp_path.iterdir()), "nothing may be written before the configuration is valid"
 
 
 def test_the_app_refuses_a_public_base_url_that_is_not_http(tmp_path):

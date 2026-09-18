@@ -1,6 +1,8 @@
 # The same jobs as `just ci`, in the same order, in the same pinned image (test/ci/Dockerfile):
-#   image -> lint -> test:redirect -> goldens:redirect
-# Every job runs directly in the CI image built by the first job: no Docker-in-Docker.
+#   image -> lint -> test:redirect -> goldens:redirect -> image:app
+# Every test job runs directly in the CI image built by the first job: no Docker-in-Docker. image:app builds
+# and runs the app image (root Dockerfile) with the runner's own Docker, through the script `just ci` runs.
+# On a v* tag, publish pushes the app image to GHCR once every other job has passed.
 # Kill switch: nothing runs until the repository variable CI_ENABLED is "true". Until then, `just ci` is the gate.
 name: ci
 
@@ -136,5 +138,90 @@ jobs:
           name: goldens-redirect
           path: test/screenshot/redirect/
 
-  # The app image job (build, container smoke test, publication on v* tags) comes here, after the goldens:
-  #   needs: goldens-redirect
+  image-app:
+    name: 'image:app'
+    needs: goldens-redirect
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # On the runner, not in the CI image: build the app image, run it, health check, API, 302, volume, stop
+      - name: image-test.sh linux/amd64
+        run: test/ci/image-test.sh linux/amd64
+
+  # Release: v* tags only, after every other job. The image is pushed by digest, tested on both platforms
+  # from the registry, and only then tagged with the version and latest: a tag never points to an untested image.
+  publish:
+    name: publish
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [image, lint, test-redirect, goldens-redirect, image-app]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      packages: write
+    env:
+      IMAGE: ghcr.io/cestmoiroma/redirect
+      SOURCE: https://github.com/CestMoiRoma/Redirect
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Version from the tag, equal to the app's
+        id: version
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          project="$(sed -n 's/^version = "\(.*\)"$/\1/p' pyproject.toml)"
+          package="$(sed -n 's/^__version__ = "\(.*\)"$/\1/p' redirect/__init__.py)"
+          if ! [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || [ "$version" != "$project" ] || [ "$version" != "$package" ]; then
+            echo "::error::tag $GITHUB_REF_NAME: expected vX.Y.Z equal to pyproject.toml ($project) and redirect/__init__.py ($package)"
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+      # arm64 is built and tested under emulation on the amd64 runner
+      - uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
+        with:
+          image: docker.io/tonistiigi/binfmt:qemu-v10.2.3@sha256:400a4873b838d1b89194d982c45e5fb3cda4593fbfd7e08a02e76b03b21166f0
+          platforms: arm64
+          cache-image: false
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build linux/amd64 and linux/arm64, push by digest (no tag yet)
+        id: build
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          outputs: type=image,name=${{ env.IMAGE }},push-by-digest=true,name-canonical=true,push=true
+          labels: |
+            org.opencontainers.image.source=${{ env.SOURCE }}
+            org.opencontainers.image.version=${{ steps.version.outputs.version }}
+            org.opencontainers.image.revision=${{ github.sha }}
+          annotations: |
+            index:org.opencontainers.image.source=${{ env.SOURCE }}
+            index:org.opencontainers.image.version=${{ steps.version.outputs.version }}
+            index:org.opencontainers.image.revision=${{ github.sha }}
+            index:org.opencontainers.image.description=Fixed public links whose target can change at any time.
+      - name: Image test, linux/amd64, pulled from the registry
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: test/ci/image-test.sh linux/amd64 "$IMAGE@$DIGEST"
+      - name: Image test, linux/arm64, pulled from the registry (emulated)
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: test/ci/image-test.sh linux/arm64 "$IMAGE@$DIGEST"
+      - name: Tag the tested image with the version and latest
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          docker buildx imagetools create --tag "$IMAGE:$VERSION" --tag "$IMAGE:latest" "$IMAGE@$DIGEST"
+          docker buildx imagetools inspect "$IMAGE:$VERSION"

@@ -282,7 +282,8 @@ h2 {
   font-weight: 400;
 }
 
-.filter input {
+/* Qualified like the generic input[type='search'] rule below, which would otherwise win */
+.filter input[type='search'] {
   width: 280px;
   max-width: 100%;
 }
@@ -341,8 +342,9 @@ h2 {
   overflow-wrap: anywhere;
 }
 
-.item-target::before {
-  content: '→ ';
+/* On the URL itself, joined by a no-break space: the arrow never ends a line on its own */
+.target-url::before {
+  content: '→\00a0';
   font-family: var(--font);
 }
 
@@ -370,7 +372,7 @@ h2 {
   }
 
   .filter,
-  .filter input {
+  .filter input[type='search'] {
     width: 100%;
   }
 }

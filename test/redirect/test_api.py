@@ -363,6 +363,15 @@ def test_a_deleted_slug_can_be_reused(client):
     assert create(client, "wiki")["id"] == created["id"] + 1
 
 
+@pytest.mark.parametrize("redirect_id", ["0", "-1", str(2**63), "99999999999999999999"])
+@pytest.mark.parametrize("method", ["PUT", "DELETE"])
+def test_an_id_outside_the_sqlite_range_is_404_not_500(client, method, redirect_id):
+    create(client, "wiki")
+    response = client.request(method, f"/api/redirects/{redirect_id}", json=BUDGET if method == "PUT" else None)
+    assert response.status_code == 404
+    assert response.json() == {"detail": NOT_FOUND, "errors": {}}
+
+
 def test_delete_with_a_non_integer_id(client):
     response = client.delete("/api/redirects/abc")
     assert response.status_code == 422

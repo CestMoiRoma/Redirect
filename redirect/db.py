@@ -24,6 +24,8 @@ MIGRATIONS: tuple[str, ...] = (
 )
 
 BUSY_TIMEOUT_SECONDS = 5.0
+# Ids are SQLite rowids: positive 64-bit integers. Anything else names no redirect (and would overflow the driver).
+MAX_ID = 2**63 - 1
 _COLUMNS = "id, slug, name, target, created_at, updated_at"
 
 
@@ -62,6 +64,10 @@ def _row(row: sqlite3.Row) -> Redirect:
         created_at=row["created_at"],
         updated_at=row["updated_at"],
     )
+
+
+def _is_possible_id(redirect_id: int) -> bool:
+    return 1 <= redirect_id <= MAX_ID
 
 
 def _is_slug_conflict(exc: sqlite3.IntegrityError) -> bool:
@@ -118,6 +124,8 @@ class Database:
         return [_row(row) for row in rows]
 
     def get(self, redirect_id: int) -> Redirect | None:
+        if not _is_possible_id(redirect_id):
+            return None
         with self._connect() as conn:
             row = conn.execute(f"SELECT {_COLUMNS} FROM redirects WHERE id = ?", (redirect_id,)).fetchone()
         return _row(row) if row else None
@@ -143,6 +151,8 @@ class Database:
         return Redirect(cursor.lastrowid, slug, name, target, now, now)
 
     def update(self, redirect_id: int, slug: str, name: str, target: str) -> Redirect | None:
+        if not _is_possible_id(redirect_id):
+            return None
         now = _timestamp(self.clock())
         try:
             with self._connect() as conn:
@@ -158,6 +168,8 @@ class Database:
         return _row(rows[0]) if rows else None
 
     def delete(self, redirect_id: int) -> Redirect | None:
+        if not _is_possible_id(redirect_id):
+            return None
         with self._connect() as conn:
             # RETURNING rows are read in full before the commit
             rows = conn.execute(f"DELETE FROM redirects WHERE id = ? RETURNING {_COLUMNS}", (redirect_id,)).fetchall()

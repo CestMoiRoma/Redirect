@@ -599,6 +599,153 @@ input[aria-invalid='true'] {
   width: 100%;
 }
 
+/* --- QR codes -------------------------------------------------------------------------------------- */
+
+/* A checkerboard shows where a QR code is transparent */
+.qr-image,
+.qr-preview {
+  background: repeating-conic-gradient(#eef1f5 0% 25%, #ffffff 0% 50%) 50% / 16px 16px;
+}
+
+.qr-list {
+  display: grid;
+  gap: 12px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.qr-card {
+  display: grid;
+  grid-template-columns: 132px minmax(0, 1fr);
+  align-items: start;
+  gap: 16px;
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+.qr-card.is-new {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+.qr-image {
+  width: 132px;
+  height: 132px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+.qr-body .item-name {
+  margin-top: 0;
+}
+
+.qr-body .link {
+  display: inline-block;
+  margin-top: 4px;
+}
+
+.qr-body .item-actions {
+  flex-wrap: wrap;
+  margin-top: 12px;
+}
+
+.qr-body a.button {
+  text-decoration: none;
+}
+
+@media (max-width: 599px) {
+  .qr-card {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.design {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+  margin: 0;
+  padding: 12px 14px 14px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.design legend {
+  padding: 0 6px;
+  font-weight: 600;
+}
+
+.design-colors {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 16px;
+}
+
+.color-field {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+}
+
+input[type='color'] {
+  width: 38px;
+  height: 32px;
+  padding: 2px;
+  border: 1px solid var(--field-border);
+  border-radius: 6px;
+  background: var(--surface);
+  cursor: pointer;
+}
+
+.design-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.design-row label {
+  flex: 1;
+  font-size: 14px;
+}
+
+input[type='range'] {
+  width: 110px;
+  accent-color: var(--accent);
+}
+
+output {
+  min-width: 78px;
+  color: var(--muted);
+  font: 13px var(--mono);
+  text-align: right;
+}
+
+input[type='file'] {
+  max-width: 100%;
+  font: 14px var(--font);
+}
+
+#qr-logo-remove {
+  justify-self: start;
+}
+
+.qr-preview {
+  display: flex;
+  justify-content: center;
+  margin: 0;
+  padding: 12px;
+  border: 1px dashed var(--border-strong);
+  border-radius: 8px;
+}
+
+#qr-preview {
+  width: 200px;
+  height: 200px;
+}
+
 /* --- Sections and log ------------------------------------------------------------------------------ */
 
 .tabs {
@@ -606,16 +753,24 @@ input[aria-invalid='true'] {
   gap: 4px;
   margin-top: -8px;
   margin-bottom: 20px;
+  overflow-x: auto;
   border-bottom: 1px solid var(--border);
 }
 
 .tabs a {
   margin-bottom: -1px;
   padding: 8px 14px;
+  white-space: nowrap;
   border-bottom: 3px solid transparent;
   color: var(--muted);
   font-weight: 600;
   text-decoration: none;
+}
+
+@media (max-width: 599px) {
+  .tabs a {
+    padding: 8px 10px;
+  }
 }
 
 .tabs a:hover {

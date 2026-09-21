@@ -45,10 +45,12 @@ from .auth import (
 from .config import Settings
 from .db import Clock, CodeMaker, Database, Redirect, SlugTakenError, new_code, timestamp, utc_now
 from .mdns import Announcer, ZeroconfAnnouncer
+from .qrcode import render_svg
 from .models import (
     DEFAULT_HOSTNAME,
     LINKS_PREFIX,
     NANO_SECTION,
+    QRCODE_SECTION,
     REDIRECT_PREFIX,
     ApiKeyOut,
     AuthOut,
@@ -57,12 +59,18 @@ from .models import (
     LoginIn,
     LogsOut,
     NanoIn,
+    QRDesign,
+    QRIn,
+    QRList,
+    QROut,
+    QRPreviewIn,
     NewApiKeyOut,
     RedirectIn,
     RedirectList,
     RedirectOut,
     SettingsIn,
     SettingsOut,
+    SvgOut,
     is_valid_code,
     is_valid_slug,
     public_url,
@@ -81,6 +89,9 @@ mimetypes.add_type("font/woff2", ".woff2")
 MAX_ECHOED_PATH = 300
 # Largest request body: a redirect is at most 255 + 100 + 2048 characters, JSON escaping included this is plenty
 MAX_BODY_BYTES = 16 * 1024
+# ...except for the QR codes, whose design may carry a logo of 256 KiB, base64-encoded
+MAX_QR_BODY_BYTES = 512 * 1024
+QR_API = "/api/qrcodes"
 
 # Pages and API answers are same-origin only; nothing inline, nothing external
 SECURITY_HEADERS = {
@@ -96,7 +107,7 @@ SECURITY_HEADERS = {
 # Fields of RedirectIn, whose messages come from models.py
 FIELDS = ("slug", "name", "target")
 # Types of the PydanticCustomError raised by models.py: their message is the one to show
-CUSTOM_ERRORS = tuple(f"{name}_" for name in (*FIELDS, "hostname"))
+CUSTOM_ERRORS = tuple(f"{name}_" for name in (*FIELDS, "hostname", "design"))
 # Names in the settings table, next to those of auth.py
 HOSTNAME = "hostname"
 HOSTNAME_ENABLED = "hostname_enabled"
@@ -226,8 +237,9 @@ class BodySizeLimit:
         if scope["type"] != "http":
             await self.app(scope, receive, send)
             return
+        limit = MAX_QR_BODY_BYTES if str(scope.get("path", "")).startswith(QR_API) else MAX_BODY_BYTES
         declared = dict(scope["headers"]).get(b"content-length", b"")
-        if declared.isdigit() and int(declared) > MAX_BODY_BYTES:
+        if declared.isdigit() and int(declared) > limit:
             await _error(413, t("errors.body_too_large"))(scope, receive, send)
             return
         received = 0
@@ -238,7 +250,7 @@ class BodySizeLimit:
             message = await receive()
             if message["type"] == "http.request":
                 received += len(message.get("body", b""))
-                if received > MAX_BODY_BYTES:
+                if received > limit:
                     raise StarletteHTTPException(413)
             return message
 
@@ -700,6 +712,67 @@ def create_app(
     @app.delete("/api/nanourls/{redirect_id}", status_code=204, responses={404: {"model": ErrorOut}})
     def delete_nano(redirect_id: str, request: Request) -> Response:
         return delete_named(redirect_id, "nano", request)
+
+    def qr_out(redirect: Redirect, request: Request, with_svg: bool) -> QROut:
+        design = QRDesign.model_validate_json(redirect.design or "{}")
+        base = out(redirect, request)
+        svg = render_svg(base.short_url, design) if with_svg else None
+        return QROut(**base.model_dump(), design=design, svg=svg, svg_url=f"{QR_API}/{redirect.code}/svg")
+
+    def qr_of(code: str) -> Redirect | None:
+        redirect = db.get(code)
+        return redirect if redirect is not None and redirect.kind == "qrcode" else None
+
+    @app.get(QR_API)
+    def list_qrcodes(request: Request) -> QRList:
+        if source_of(request) == "api":
+            record("read", request, path=_route_path(request))
+        qrcodes = [qr_out(r, request, with_svg=False) for r in db.list_all() if r.kind == "qrcode"]
+        return QRList(base_url=base_url(request), qrcodes=qrcodes)
+
+    @app.post(QR_API, status_code=201, response_model=QROut, responses={409: {"model": ErrorOut}})
+    def create_qrcode(body: QRIn, request: Request) -> Response | QROut:
+        design = body.design.model_dump_json()
+        created = create_named(QRCODE_SECTION, "qrcode", body.name, body.target, design, request)
+        return qr_out(created, request, with_svg=True) if isinstance(created, Redirect) else created
+
+    @app.post(f"{QR_API}/preview")
+    def preview_qrcode(body: QRPreviewIn, request: Request) -> SvgOut:
+        """The QR code a design would give, without saving it: of the QR code `id`, or of a new one."""
+        existing = qr_of(body.id) if body.id else None
+        code = existing.code if existing else "Preview0"  # a new id has the same length: the same QR size
+        return SvgOut(svg=render_svg(short_url(base_url(request), code), body.design))
+
+    @app.get(f"{QR_API}/{{redirect_id}}", response_model=QROut, responses={404: {"model": ErrorOut}})
+    def get_qrcode(redirect_id: str, request: Request) -> Response | QROut:
+        qr = qr_of(redirect_id)
+        if qr is None:
+            return _error(404, t("errors.not_found"))
+        if source_of(request) == "api":
+            record("read", request, path=_route_path(request))
+        return qr_out(qr, request, with_svg=True)
+
+    @app.get(f"{QR_API}/{{redirect_id}}/svg", include_in_schema=False)
+    def qrcode_svg(redirect_id: str, request: Request) -> Response:
+        qr = qr_of(redirect_id)
+        if qr is None:
+            return _error(404, t("errors.not_found"))
+        filename = qr.slug.rsplit("/", 1)[-1] + ".svg"
+        return Response(
+            qr_out(qr, request, with_svg=True).svg,
+            media_type="image/svg+xml",
+            headers={"Content-Disposition": f'inline; filename="{filename}"', "Cache-Control": "no-cache"},
+        )
+
+    @app.put(f"{QR_API}/{{redirect_id}}", response_model=QROut, responses={404: {"model": ErrorOut}})
+    def update_qrcode(redirect_id: str, body: QRIn, request: Request) -> Response | QROut:
+        design = body.design.model_dump_json()
+        updated = update_named(redirect_id, QRCODE_SECTION, "qrcode", body.name, body.target, design, request)
+        return qr_out(updated, request, with_svg=True) if isinstance(updated, Redirect) else updated
+
+    @app.delete(f"{QR_API}/{{redirect_id}}", status_code=204, responses={404: {"model": ErrorOut}})
+    def delete_qrcode(redirect_id: str, request: Request) -> Response:
+        return delete_named(redirect_id, "qrcode", request)
 
     @app.get("/api/logs")
     def get_logs(

@@ -83,6 +83,10 @@ SHOTS = (
     "34-nano-empty",
     "35-nano-created",
     "36-nano-name-taken",
+    "37-qr-empty",
+    "38-qr-designed",
+    "39-qr-created",
+    "40-qr-contrast",
 )
 
 # Web fonts each kind of page must have loaded (and so rendered with) when captured
@@ -1071,7 +1075,7 @@ def logs_walk(run: Scenario, data_dir: Path) -> None:
         page.goto(base + "/")
         log_in(page)
         tabs = page.get_by_role("navigation", name="Sections")
-        expect(tabs.get_by_role("link")).to_have_text(["Redirects", "NanoURL", "Logs"])
+        expect(tabs.get_by_role("link")).to_have_text(["Redirects", "NanoURL", "QR codes", "Logs"])
         expect(tabs.get_by_role("link", name="Redirects")).to_have_attribute("aria-current", "page")
         view = page.locator("#logs-view")
 
@@ -1228,6 +1232,140 @@ def nano_walk(run: Scenario, data_dir: Path) -> None:
         page.context.close()
 
 
+QR_LOGO = (
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10">'
+    '<rect width="10" height="10" rx="2" fill="#c2185b"/><circle cx="5" cy="5" r="3" fill="#ffffff"/></svg>'
+)
+
+
+def preview_svg(page: Page) -> str:
+    return page.evaluate(
+        "() => decodeURIComponent(document.querySelector('#qr-preview').src.split(',').slice(1).join(','))"
+    )
+
+
+def set_range(page: Page, selector: str, value: int) -> None:
+    """Ranges cannot be filled: set the value, then send the change the page listens to."""
+    page.locator(selector).evaluate(
+        "(input, value) => { input.value = value; input.dispatchEvent(new Event('change')) }", str(value)
+    )
+
+
+def qr_walk(run: Scenario, data_dir: Path) -> None:
+    """QR codes: the editor and its preview, a full design with a logo, the SVG, a contrast error, delete."""
+    shutil.copyfile(FIXTURE_DB, data_dir / "redirect.db")
+    logo = data_dir / "logo.svg"
+    logo.write_text(QR_LOGO, encoding="utf-8")
+    with app_server(data_dir) as base:
+        page = run.open(base)
+        page.goto(base + "/")
+        log_in(page)
+        page.get_by_role("navigation", name="Sections").get_by_role("link", name="QR codes").click()
+        view = page.locator("#qr-view")
+        form = view.locator("#qr-form")
+        cards = view.locator("#qr-list .qr-card")
+        status = view.locator("#qr-status")
+        preview = view.locator("#qr-preview")
+
+        # --- Nothing yet: the editor shows a plain QR code
+        expect(view.get_by_role("heading", level=2, name="QR codes")).to_be_visible()
+        expect(view.locator("#qr-empty p")).to_have_text(
+            ["No QR code yet", "Give a name and a target, choose a look, then download the SVG."]
+        )
+        expect(view.locator("#qr-form-title")).to_have_text("New QR code")
+        expect(form.locator("legend")).to_have_text("Look")
+        expect(preview).to_have_attribute("src", re.compile(r"^data:image/svg\+xml"))
+        expect(preview).to_have_attribute("alt", "Preview of the QR code")
+        expect(view.locator("#qr-logo-size-value")).to_have_text("22 %")
+        expect(view.locator("#qr-margin-value")).to_have_text("4 modules")
+        expect(view.get_by_role("button", name="Remove the logo")).to_be_hidden()
+        expect(view.locator("#qr-logo-size")).to_be_disabled()
+        expect(view.get_by_role("button", name="Cancel")).to_be_hidden()
+        assert 'fill="#1b1f24"' in preview_svg(page)
+        run.shot(page, "37-qr-empty", fonts=FORM_FONTS)
+
+        # --- A full design: colors, dots, round corners, a logo, a thinner margin
+        form.get_by_label("Name").fill("Lunch menu")
+        form.get_by_label("Target URL").fill("http://wiki.intranet.local/menu")
+        form.get_by_label("Modules").fill("#0b3d91")
+        form.get_by_label("Corners").fill("#c2185b")
+        form.get_by_label("Module shape").select_option("dots")
+        form.get_by_label("Corner shape").select_option("circle")
+        form.get_by_label("Logo in the center").set_input_files(logo)
+        expect(view.get_by_role("button", name="Remove the logo")).to_be_visible()
+        expect(view.locator("#qr-logo-size")).to_be_enabled()
+        set_range(page, "#qr-margin", 2)
+        expect(view.locator("#qr-margin-value")).to_have_text("2 modules")
+        page.wait_for_function(
+            "() => decodeURIComponent(document.querySelector('#qr-preview').src).includes('<image href=\"data:image/svg+xml;base64,')"
+        )
+        svg = preview_svg(page)
+        assert "<circle " in svg and 'fill="#0b3d91"' in svg and 'fill="#c2185b"' in svg
+        run.shot(page, "38-qr-designed", fonts=FORM_FONTS)
+
+        # --- Created: the card, the SVG file, the link it carries
+        form.get_by_role("button", name="Create QR code").click()
+        expect(status).to_have_text("QR code “Lunch menu” created.")
+        expect(cards).to_have_count(1)
+        card = cards.nth(0)
+        short = f"{LINKS_BASE}/links/New00001"
+        expect(card.locator(".item-name")).to_have_text("Lunch menu")
+        expect(card.locator(".link")).to_have_text(short)
+        expect(card.locator(".qr-image")).to_have_attribute("alt", "QR code of Lunch menu")
+        page.wait_for_function("() => document.querySelector('.qr-card .qr-image').naturalWidth > 0")
+        download = card.get_by_role("link", name="Download SVG: Lunch menu")
+        expect(download).to_be_focused()
+        expect(card.locator(".item-actions > *")).to_have_text(["Download SVG", "Edit", "Delete"])
+        expect(card.locator(".target-label")).to_have_text("Target")
+        expect(view.locator("#qr-form-title")).to_have_text("New QR code")
+        expect(form.get_by_label("Name")).to_have_value("")
+        expect(view.locator("#qr-count")).to_have_text("1 QR code")
+        run.shot(page, "39-qr-created")
+        with page.expect_download() as download_info:
+            download.click()
+        saved = download_info.value
+        assert saved.suggested_filename == "Lunch-menu.svg"
+        content = Path(saved.path()).read_text(encoding="utf-8")
+        assert content.startswith('<svg xmlns="http://www.w3.org/2000/svg"') and 'fill="#c2185b"' in content
+        with page.expect_popup() as popup_info:
+            card.get_by_role("link", name=short).click()
+        landed = popup_info.value
+        expect(landed).to_have_url("http://wiki.intranet.local/menu")
+        landed.close()
+
+        # --- Edit: colors too close are refused before anything is saved, then a new corner shape
+        card.get_by_role("button", name="Edit: Lunch menu").click()
+        expect(view.locator("#qr-form-title")).to_have_text("Edit QR code")
+        expect(form.get_by_label("Name")).to_have_value("Lunch menu")
+        expect(form.get_by_label("Name")).to_be_focused()
+        expect(form.get_by_label("Modules")).to_have_value("#0b3d91")
+        expect(view.get_by_role("button", name="Cancel")).to_be_visible()
+        with run.watch.http_error(page, base + "/api/qrcodes/preview", 422):
+            form.get_by_label("Modules").fill("#eeeeee")
+            expect(view.locator("#qr-design-error")).to_have_text(
+                "The colors are too close to the background: scanners could not read the QR code."
+            )
+        run.shot(page, "40-qr-contrast")
+        form.get_by_label("Modules").fill("#0b3d91")
+        expect(view.locator("#qr-design-error")).to_be_hidden()
+        form.get_by_label("Corner shape").select_option("rounded")
+        form.get_by_role("button", name="Save changes").click()
+        expect(status).to_have_text("Redirect “Lunch menu” saved.")
+        expect(view.locator("#qr-form-title")).to_have_text("New QR code")
+        served = page.request.get(base + f"/api/qrcodes/{id_of(page, base, 'QRcodes/Lunch-menu')}/svg").text()
+        assert "<circle " in served and " 0 0 1 " in served  # dots, and rounded corners (arcs)
+
+        # --- Deleted
+        card.get_by_role("button", name="Delete: Lunch menu").click()
+        expect(page.locator("#delete-text")).to_have_text(
+            f"The link {short} will stop working for everyone who has it."
+        )
+        page.locator("#delete-dialog").get_by_role("button", name="Delete").click()
+        expect(status).to_have_text("Redirect “Lunch menu” deleted.")
+        expect(view.locator("#qr-empty")).to_be_visible()
+        page.context.close()
+
+
 def open_mode(run: Scenario, data_dir: Path) -> None:
     """No admin password: no login, and a red warning that stays on screen."""
     shutil.copyfile(FIXTURE_DB, data_dir / "redirect.db")
@@ -1264,7 +1402,7 @@ def main(out_dir: Path) -> int:
                 with tempfile.TemporaryDirectory() as empty, tempfile.TemporaryDirectory() as seeded:
                     empty_list(run, Path(empty))
                     main_walk(run, Path(seeded))
-                for walk in (auth_walk, settings_walk, environment_walk, logs_walk, nano_walk, open_mode):
+                for walk in (auth_walk, settings_walk, environment_walk, logs_walk, nano_walk, qr_walk, open_mode):
                     with tempfile.TemporaryDirectory() as data:
                         walk(run, Path(data))
             browser.close()

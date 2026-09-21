@@ -46,6 +46,7 @@
       <nav class="tabs" data-i18n-aria-label="nav.label">
         <a href="#/" data-view="redirects" data-i18n="nav.redirects"></a>
         <a href="#/nano" data-view="nano" data-i18n="nav.nano"></a>
+        <a href="#/qr" data-view="qr" data-i18n="nav.qr"></a>
         <a href="#/logs" data-view="logs" data-i18n="nav.logs"></a>
       </nav>
     </div>
@@ -82,6 +83,90 @@
             <p class="form-error" role="alert" hidden></p>
             <div class="form-actions">
               <button type="submit" class="button primary" data-i18n="nano.create.submit"></button>
+            </div>
+          </form>
+        </section>
+      </div>
+    </main>
+
+    <main class="wrap layout" id="qr-view" hidden>
+      <section class="list-section" aria-labelledby="qr-title">
+        <div class="list-head">
+          <h2 id="qr-title" tabindex="-1"><span data-i18n="qr.title"></span> <span class="count" id="qr-count"></span></h2>
+        </div>
+        <p class="hint section-help" data-i18n="qr.help"></p>
+        <p id="qr-status" class="status" role="status" aria-live="polite" hidden></p>
+        <ul id="qr-list" class="qr-list"></ul>
+        <div id="qr-empty" class="empty" hidden>
+          <p class="empty-title" data-i18n="qr.empty.title"></p>
+          <p data-i18n="qr.empty.text"></p>
+        </div>
+      </section>
+
+      <div class="side">
+        <section class="card create qr-editor" aria-labelledby="qr-form-title">
+          <h2 id="qr-form-title"></h2>
+          <form id="qr-form" class="redirect-form" novalidate>
+            <div class="field">
+              <label for="qr-name" data-i18n="form.name.label"></label>
+              <input id="qr-name" name="name" type="text" autocomplete="off" aria-describedby="qr-name-hint qr-name-error" />
+              <p class="hint" id="qr-name-hint" data-i18n="qr.name.hint"></p>
+              <p class="field-error" id="qr-name-error" hidden></p>
+            </div>
+            <div class="field">
+              <label for="qr-target" data-i18n="form.target.label"></label>
+              <input id="qr-target" name="target" type="url" inputmode="url" autocomplete="off" spellcheck="false" aria-describedby="qr-target-error" />
+              <p class="field-error" id="qr-target-error" hidden></p>
+            </div>
+            <fieldset class="design" id="qr-design" name="design" aria-describedby="qr-design-error">
+              <legend data-i18n="qr.design"></legend>
+              <div class="design-colors">
+                <label class="color-field"><input type="color" id="qr-color" /> <span data-i18n="qr.color"></span></label>
+                <label class="color-field"><input type="color" id="qr-eye-color" /> <span data-i18n="qr.eye_color"></span></label>
+                <label class="color-field"><input type="color" id="qr-background" /> <span data-i18n="qr.background"></span></label>
+              </div>
+              <label class="check"><input type="checkbox" id="qr-transparent" /> <span data-i18n="qr.transparent"></span></label>
+              <div class="design-row">
+                <label for="qr-module-style" data-i18n="qr.module_style"></label>
+                <select id="qr-module-style">
+                  <option value="square" data-i18n="qr.style.square"></option>
+                  <option value="rounded" data-i18n="qr.style.rounded"></option>
+                  <option value="dots" data-i18n="qr.style.dots"></option>
+                </select>
+              </div>
+              <div class="design-row">
+                <label for="qr-eye-style" data-i18n="qr.eye_style"></label>
+                <select id="qr-eye-style">
+                  <option value="square" data-i18n="qr.style.square"></option>
+                  <option value="rounded" data-i18n="qr.style.rounded"></option>
+                  <option value="circle" data-i18n="qr.style.circle"></option>
+                </select>
+              </div>
+              <div class="field">
+                <label for="qr-logo" data-i18n="qr.logo"></label>
+                <input type="file" id="qr-logo" accept="image/png,image/jpeg,image/webp,image/svg+xml" aria-describedby="qr-logo-hint" />
+                <p class="hint" id="qr-logo-hint" data-i18n="qr.logo.hint"></p>
+                <button type="button" class="button" id="qr-logo-remove" data-i18n="qr.logo.remove" hidden></button>
+              </div>
+              <div class="design-row">
+                <label for="qr-logo-size" data-i18n="qr.logo_size"></label>
+                <input type="range" id="qr-logo-size" min="10" max="30" step="1" />
+                <output for="qr-logo-size" id="qr-logo-size-value"></output>
+              </div>
+              <div class="design-row">
+                <label for="qr-margin" data-i18n="qr.margin"></label>
+                <input type="range" id="qr-margin" min="0" max="10" step="1" />
+                <output for="qr-margin" id="qr-margin-value"></output>
+              </div>
+              <p class="field-error" id="qr-design-error" hidden></p>
+            </fieldset>
+            <figure class="qr-preview">
+              <img id="qr-preview" data-i18n-alt="qr.preview" width="200" height="200" />
+            </figure>
+            <p class="form-error" role="alert" hidden></p>
+            <div class="form-actions">
+              <button type="button" class="button" id="qr-cancel" data-i18n="form.cancel" hidden></button>
+              <button type="submit" class="button primary" id="qr-submit"></button>
             </div>
           </form>
         </section>
@@ -223,6 +308,22 @@
     <div class="wrap">
       <p id="load-error" class="status status-error" role="alert" hidden></p>
     </div>
+
+    <template id="qr-template">
+      <li class="qr-card">
+        <img class="qr-image" alt="" width="132" height="132" />
+        <div class="qr-body">
+          <p class="item-name"></p>
+          <a class="link" target="_blank" rel="noopener noreferrer"></a>
+          <p class="item-target"><span class="target-label" data-i18n="list.target.label"></span> <span class="target-url"></span></p>
+          <div class="item-actions">
+            <a class="button" data-action="download" data-i18n="qr.download"></a>
+            <button type="button" class="button" data-action="edit" data-i18n="list.edit"></button>
+            <button type="button" class="button danger-ghost" data-action="delete" data-i18n="list.delete"></button>
+          </div>
+        </div>
+      </li>
+    </template>
 
     <template id="item-template">
       <li class="item">

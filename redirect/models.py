@@ -1,10 +1,13 @@
 """API schemas. Slug, name and target validation lives here, and only here."""
 
+import base64
+import binascii
 import re
 import unicodedata
+from typing import Literal
 from urllib.parse import quote, urlsplit, urlunsplit
 
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 from pydantic_core import PydanticCustomError
 
 from .strings import t
@@ -321,3 +324,112 @@ class NanoIn(BaseModel):
     @classmethod
     def _target(cls, value: str) -> str:
         return validate_target(value)
+
+
+# --- QR codes ---------------------------------------------------------------------------------------------
+
+_HEX_COLOR = re.compile(r"#[0-9a-fA-F]{6}")
+_LOGO = re.compile(r"data:image/(png|jpeg|webp|svg\+xml);base64,([A-Za-z0-9+/]+={0,2})")
+LOGO_MAX_BYTES = 256 * 1024
+# Scanners need the dark parts to stand out: WCAG's 3:1 for graphics
+MIN_QR_CONTRAST = 3.0
+
+
+def _luminance(color: str) -> float:
+    def channel(value: int) -> float:
+        c = value / 255
+        return c / 12.92 if c <= 0.03928 else ((c + 0.055) / 1.055) ** 2.4
+
+    r, g, b = (int(color[i : i + 2], 16) for i in (1, 3, 5))
+    return 0.2126 * channel(r) + 0.7152 * channel(g) + 0.0722 * channel(b)
+
+
+def contrast(first: str, second: str) -> float:
+    lighter, darker = sorted((_luminance(first), _luminance(second)), reverse=True)
+    return (lighter + 0.05) / (darker + 0.05)
+
+
+class QRDesign(BaseModel):
+    """How a QR code looks. Every field has a default: {} is a plain black and white QR code."""
+
+    color: str = "#1b1f24"
+    eye_color: str = "#1b1f24"
+    # A color, or "transparent"
+    background: str = "#ffffff"
+    module_style: Literal["square", "rounded", "dots"] = "square"
+    eye_style: Literal["square", "rounded", "circle"] = "square"
+    # A data URI: PNG, JPEG, WebP or SVG, base64, 256 KiB at most once decoded
+    logo: str | None = None
+    # Side of the logo, as a share of the QR code's side
+    logo_size: float = Field(default=0.22, ge=0.1, le=0.3)
+    # Blank border, in modules (4 is the standard quiet zone)
+    margin: int = Field(default=4, ge=0, le=10)
+
+    @field_validator("color", "eye_color")
+    @classmethod
+    def _color(cls, value: str) -> str:
+        if not _HEX_COLOR.fullmatch(value):
+            raise PydanticCustomError("design_color", t("errors.design_color"))
+        return value.lower()
+
+    @field_validator("background")
+    @classmethod
+    def _background(cls, value: str) -> str:
+        if value == "transparent":
+            return value
+        return cls._color(value)
+
+    @field_validator("logo")
+    @classmethod
+    def _logo(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        match = _LOGO.fullmatch(value)
+        try:
+            size = len(base64.b64decode(match.group(2), validate=True)) if match else -1
+        except binascii.Error:
+            size = -1
+        if size < 0:
+            raise PydanticCustomError("design_logo", t("errors.design_logo"))
+        if size > LOGO_MAX_BYTES:
+            raise PydanticCustomError("design_logo_size", t("errors.design_logo_size"))
+        return value
+
+    @model_validator(mode="after")
+    def _contrast(self) -> "QRDesign":
+        if (
+            self.background != "transparent"
+            and min(contrast(self.color, self.background), contrast(self.eye_color, self.background)) < MIN_QR_CONTRAST
+        ):
+            raise PydanticCustomError("design_contrast", t("errors.design_contrast"))
+        return self
+
+
+class QRIn(NanoIn):
+    """Body of POST /api/qrcodes and PUT /api/qrcodes/<id>: a NanoURL with a design."""
+
+    design: QRDesign = QRDesign()
+
+
+class QRPreviewIn(BaseModel):
+    """Body of POST /api/qrcodes/preview: a design, and the QR code it is for, if it exists already."""
+
+    design: QRDesign = QRDesign()
+    id: str | None = None
+
+
+class QROut(RedirectOut):
+    """A QR code. `svg` is the image itself: in the answers to POST, PUT and GET of one QR code."""
+
+    design: QRDesign
+    svg: str | None = None
+    svg_url: str
+
+
+class QRList(BaseModel):
+    base_url: str
+    qrcodes: list[QROut]
+
+
+class SvgOut(BaseModel):
+    svg: str

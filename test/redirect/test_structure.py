@@ -19,7 +19,7 @@ STRINGS = json.loads((STATIC / "strings.json").read_text(encoding="utf-8"))
 # The only absolute URL allowed in static/: the SVG namespace, an identifier that is never fetched
 ALLOWED_URLS = {"http://www.w3.org/2000/svg"}
 # Third-party packages the app may import: its runtime dependencies (pyproject.toml) and what they bring
-ALLOWED_THIRD_PARTY = {"fastapi", "ifaddr", "pydantic", "pydantic_core", "starlette", "uvicorn", "zeroconf"}
+ALLOWED_THIRD_PARTY = {"fastapi", "ifaddr", "pydantic", "pydantic_core", "segno", "starlette", "uvicorn", "zeroconf"}
 # Redirect never fetches, proxies or runs anything: no HTTP client, no raw socket, no subprocess
 FORBIDDEN_MODULES = {
     "requests",
@@ -137,7 +137,7 @@ class _TextCollector(HTMLParser):
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         for name, value in attrs:
-            if name in ("data-i18n", "data-i18n-placeholder", "data-i18n-aria-label") and value:
+            if name in ("data-i18n", "data-i18n-placeholder", "data-i18n-aria-label", "data-i18n-alt") and value:
                 self.keys.add(value)
             elif name in self.TEXT_ATTRIBUTES and value and (tag, name) != ("option", "value"):
                 # An option's value is what the page reads, never shown: its label comes from data-i18n

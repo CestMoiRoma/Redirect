@@ -4,7 +4,8 @@
 ;(() => {
   const COPIED_MS = 2000
   const LOG_PAGE = 25
-  const FIELDS = ['slug', 'name', 'target']
+  // Fields whose errors the API reports by name (a form has the ones it shows)
+  const FIELDS = ['slug', 'name', 'target', 'design']
 
   const state = {
     strings: {},
@@ -18,6 +19,10 @@
     keyExists: false,
     settings: null, // as last saved on the server
     logsBefore: null, // the `before` of the next page of the log
+    qrcodes: [],
+    qrEditing: null, // the QR code the editor changes; null while it creates one
+    qrLogo: null, // the logo of the editor, as a data URI
+    qrVersion: 0, // changes the images' URLs after each reload, so an edited QR code is fetched again
     appShown: false,
   }
 
@@ -40,6 +45,9 @@
     })
     root.querySelectorAll('[data-i18n-aria-label]').forEach((el) => {
       el.setAttribute('aria-label', t(el.dataset.i18nAriaLabel))
+    })
+    root.querySelectorAll('[data-i18n-alt]').forEach((el) => {
+      el.alt = t(el.dataset.i18nAlt)
     })
   }
 
@@ -85,6 +93,9 @@
     state.redirects = data.redirects
     render()
     renderNanos()
+    state.qrcodes = (await api('GET', '/api/qrcodes')).qrcodes
+    state.qrVersion += 1
+    renderQrs()
   }
 
   function ofKind(kind) {
@@ -97,6 +108,7 @@
   const PLACES = {
     link: { list: '#list', title: '#list-title', status: '#status' },
     nano: { list: '#nano-list', title: '#nano-title', status: '#nano-status' },
+    qr: { list: '#qr-list', title: '#qr-title', status: '#qr-status' },
   }
 
   // The status line tells the outcome of the last action: a new action starts without it
@@ -688,10 +700,209 @@
     })
   }
 
+  // --- QR codes ---------------------------------------------------------------------------------------
+
+  const DEFAULT_DESIGN = {
+    color: '#1b1f24',
+    eye_color: '#1b1f24',
+    background: '#ffffff',
+    module_style: 'square',
+    eye_style: 'square',
+    logo: null,
+    logo_size: 0.22,
+    margin: 4,
+  }
+
+  function readDesign() {
+    return {
+      color: $('#qr-color').value,
+      eye_color: $('#qr-eye-color').value,
+      background: $('#qr-transparent').checked ? 'transparent' : $('#qr-background').value,
+      module_style: $('#qr-module-style').value,
+      eye_style: $('#qr-eye-style').value,
+      logo: state.qrLogo,
+      logo_size: Number($('#qr-logo-size').value) / 100,
+      margin: Number($('#qr-margin').value),
+    }
+  }
+
+  function showDesign(design) {
+    $('#qr-color').value = design.color
+    $('#qr-eye-color').value = design.eye_color
+    $('#qr-transparent').checked = design.background === 'transparent'
+    $('#qr-background').value = design.background === 'transparent' ? '#ffffff' : design.background
+    $('#qr-module-style').value = design.module_style
+    $('#qr-eye-style').value = design.eye_style
+    $('#qr-logo-size').value = String(Math.round(design.logo_size * 100))
+    $('#qr-margin').value = String(design.margin)
+    $('#qr-logo').value = ''
+    state.qrLogo = design.logo
+    showDesignValues()
+  }
+
+  function showDesignValues() {
+    $('#qr-logo-size-value').textContent = t('qr.percent', { value: $('#qr-logo-size').value })
+    $('#qr-margin-value').textContent = t('qr.modules', { value: $('#qr-margin').value })
+    $('#qr-logo-remove').hidden = !state.qrLogo
+    $('#qr-logo-size').disabled = !state.qrLogo
+    $('#qr-background').disabled = $('#qr-transparent').checked
+  }
+
+  function setDesignError(message) {
+    const slot = $('#qr-design-error')
+    slot.textContent = message || ''
+    slot.hidden = !message
+  }
+
+  // The server draws the preview with the same code as the final SVG
+  async function refreshPreview() {
+    try {
+      const { svg } = await api('POST', '/api/qrcodes/preview', {
+        design: readDesign(),
+        id: state.qrEditing ? state.qrEditing.id : null,
+      })
+      $('#qr-preview').src = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`
+      setDesignError(null)
+    } catch (error) {
+      if (!(error instanceof ApiError)) throw error
+      if (error.status !== 401) setDesignError(error.errors.design || error.message)
+    }
+  }
+
+  function startCreating() {
+    const form = $('#qr-form')
+    state.qrEditing = null
+    form.reset()
+    clearErrors(form)
+    showDesign(DEFAULT_DESIGN)
+    $('#qr-form-title').textContent = t('qr.create.title')
+    $('#qr-submit').textContent = t('qr.create.submit')
+    $('#qr-cancel').hidden = true
+  }
+
+  function startEditing(qr) {
+    const form = $('#qr-form')
+    state.qrEditing = qr
+    clearErrors(form)
+    form.elements.name.value = qr.name
+    form.elements.target.value = qr.target
+    showDesign(qr.design)
+    $('#qr-form-title').textContent = t('qr.edit.title')
+    $('#qr-submit').textContent = t('form.edit.submit')
+    $('#qr-cancel').hidden = false
+    refreshPreview()
+    form.elements.name.focus()
+  }
+
+  function renderQr(qr) {
+    const item = $('#qr-template').content.firstElementChild.cloneNode(true)
+    item.dataset.id = qr.id
+    item.classList.toggle('is-new', qr.id === state.highlightId)
+    const image = $('.qr-image', item)
+    image.src = `${qr.svg_url}?v=${state.qrVersion}`
+    image.alt = t('qr.image.alt', { name: qr.name })
+    $('.item-name', item).textContent = qr.name
+    const link = $('.link', item)
+    link.href = qr.short_url
+    link.replaceChildren(...breakableUrl(qr.short_url))
+    $('.target-url', item).replaceChildren(...breakableUrl(qr.target))
+    const download = $('[data-action="download"]', item)
+    download.href = qr.svg_url
+    download.download = `${qr.slug.split('/').pop()}.svg`
+    download.setAttribute('aria-label', t('qr.download.aria', { name: qr.name }))
+    $('[data-action="edit"]', item).setAttribute('aria-label', t('list.edit.aria', { name: qr.name }))
+    $('[data-action="delete"]', item).setAttribute('aria-label', t('list.delete.aria', { name: qr.name }))
+    return item
+  }
+
+  function renderQrs() {
+    const list = $('#qr-list')
+    list.replaceChildren(...state.qrcodes.map(renderQr))
+    list.hidden = state.qrcodes.length === 0
+    $('#qr-empty').hidden = state.qrcodes.length !== 0
+    const count = $('#qr-count')
+    const total = state.qrcodes.length
+    count.textContent = total === 1 ? t('qr.count.one') : t('qr.count.other', { count: total })
+    count.hidden = total === 0
+    // The QR code being edited is gone (deleted here or elsewhere): back to creating one
+    if (state.qrEditing && !state.qrcodes.some((qr) => qr.id === state.qrEditing.id)) {
+      startCreating()
+      refreshPreview()
+    }
+  }
+
+  function setupQrs() {
+    const place = PLACES.qr
+    const form = $('#qr-form')
+    for (const selector of ['#qr-color', '#qr-eye-color', '#qr-background', '#qr-transparent', '#qr-module-style', '#qr-eye-style', '#qr-logo-size', '#qr-margin']) {
+      $(selector).addEventListener('change', () => {
+        showDesignValues()
+        refreshPreview()
+      })
+    }
+    // Ranges show their value while they move; the preview follows on release
+    for (const selector of ['#qr-logo-size', '#qr-margin']) $(selector).addEventListener('input', showDesignValues)
+    $('#qr-logo').addEventListener('change', (event) => {
+      const [file] = event.target.files
+      if (!file) return
+      const reader = new FileReader()
+      reader.addEventListener('load', () => {
+        state.qrLogo = reader.result
+        showDesignValues()
+        refreshPreview()
+      })
+      reader.readAsDataURL(file)
+    })
+    $('#qr-logo-remove').addEventListener('click', () => {
+      state.qrLogo = null
+      $('#qr-logo').value = ''
+      showDesignValues()
+      refreshPreview()
+      $('#qr-logo').focus()
+    })
+    $('#qr-cancel').addEventListener('click', () => {
+      const id = state.qrEditing && state.qrEditing.id
+      startCreating()
+      refreshPreview()
+      focusInItem(id, 'edit', place)
+    })
+    form.addEventListener('submit', (event) => {
+      event.preventDefault()
+      setDesignError(null)
+      submitting(
+        form,
+        async () => {
+          const body = { name: form.elements.name.value, target: form.elements.target.value, design: readDesign() }
+          const editing = state.qrEditing
+          const saved = editing
+            ? await api('PUT', `/api/qrcodes/${editing.id}`, body)
+            : await api('POST', '/api/qrcodes', body)
+          state.highlightId = saved.id
+          startCreating()
+          await reload()
+          refreshPreview()
+          const message = editing ? t('status.saved', { name: saved.name }) : t('qr.created', { name: saved.name })
+          setStatus(message, false, place)
+          focusInItem(saved.id, 'download', place)
+        },
+        place,
+      )
+    })
+    $('#qr-list').addEventListener('click', (event) => {
+      const button = event.target.closest('button[data-action]')
+      if (!button) return
+      const qr = state.qrcodes.find((q) => q.id === button.closest('[data-id]').dataset.id)
+      if (!qr) return
+      if (button.dataset.action === 'edit') startEditing(qr)
+      else if (button.dataset.action === 'delete') openDelete(qr, qr.short_url, place)
+    })
+    startCreating()
+  }
+
   // --- Sections: redirects, log ------------------------------------------------------------------------
 
-  const VIEWS = { redirects: '#main', nano: '#nano-view', logs: '#logs-view' }
-  const VIEW_HASHES = { '#/nano': 'nano', '#/logs': 'logs' }
+  const VIEWS = { redirects: '#main', nano: '#nano-view', qr: '#qr-view', logs: '#logs-view' }
+  const VIEW_HASHES = { '#/nano': 'nano', '#/qr': 'qr', '#/logs': 'logs' }
 
   function currentView() {
     return VIEW_HASHES[location.hash] || 'redirects'
@@ -705,6 +916,7 @@
       else link.removeAttribute('aria-current')
     })
     if (view === 'logs') loadLogs(true)
+    if (view === 'qr') refreshPreview()
   }
 
   // Texts of the log, one function per value so each key is written out in full
@@ -853,7 +1065,8 @@
     const response = await fetch('/static/strings.json')
     state.strings = await response.json()
     applyStrings(document)
-    applyStrings($('#item-template').content)
+    // Templates are outside the document: their texts are set once, before any copy is made
+    document.querySelectorAll('template').forEach((template) => applyStrings(template.content))
     document.title = t('app.title')
     setupList()
     setupCreate()
@@ -864,6 +1077,7 @@
     setupSettings()
     setupLogs()
     setupNanos()
+    setupQrs()
     await start()
   }
 

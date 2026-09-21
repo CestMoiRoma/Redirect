@@ -27,9 +27,17 @@ def make_client(tmp_path: Path, clock: FrozenClock) -> Iterator[Callable[..., Te
         public_base_url: str | None = None,
         admin_password: str | None = None,
         new_key: Callable[[], str] | None = None,
+        api_enabled: bool | None = None,
+        port: int = 80,
         **client_options: object,
     ) -> TestClient:
-        settings = Settings(data_dir=tmp_path / "data", public_base_url=public_base_url, admin_password=admin_password)
+        settings = Settings(
+            data_dir=tmp_path / "data",
+            port=port,
+            public_base_url=public_base_url,
+            admin_password=admin_password,
+            api_enabled=api_enabled,
+        )
         app = create_app(settings, clock) if new_key is None else create_app(settings, clock, new_key)
         client = TestClient(app, **client_options)
         client.__enter__()
@@ -43,7 +51,7 @@ def make_client(tmp_path: Path, clock: FrozenClock) -> Iterator[Callable[..., Te
 
 @pytest.fixture
 def client(make_client: Callable[..., TestClient]) -> TestClient:
-    """No PUBLIC_BASE_URL: links are built from the Host header (http://testserver)."""
+    """No PUBLIC_BASE_URL: links use the default hostname, redirect.lan."""
     return make_client()
 
 

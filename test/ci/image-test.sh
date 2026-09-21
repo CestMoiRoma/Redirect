@@ -25,14 +25,14 @@ START_TIMEOUT=120
 cleanup() {
   local status=$?
   if [ "$status" -ne 0 ]; then
-    for name in "$RUN_ID-a" "$RUN_ID-b" "$RUN_ID-c" "$RUN_ID-d" "$RUN_ID-e"; do
+    for name in "$RUN_ID-a" "$RUN_ID-b" "$RUN_ID-c" "$RUN_ID-d" "$RUN_ID-e" "$RUN_ID-f"; do
       if docker container inspect "$name" >/dev/null 2>&1; then
         echo "--- logs of $name"
         docker logs --tail 50 "$name" 2>&1 || true
       fi
     done
   fi
-  docker rm --force "$RUN_ID-a" "$RUN_ID-b" "$RUN_ID-c" "$RUN_ID-d" "$RUN_ID-e" >/dev/null 2>&1 || true
+  docker rm --force "$RUN_ID-a" "$RUN_ID-b" "$RUN_ID-c" "$RUN_ID-d" "$RUN_ID-e" "$RUN_ID-f" >/dev/null 2>&1 || true
   docker volume rm --force "$VOLUME" >/dev/null 2>&1 || true
   rm -rf "$WORK"
   exit "$status"
@@ -152,7 +152,7 @@ contains "interface content type" "$(header content-type)" text/html
 body="{\"slug\": \"$SLUG\", \"name\": \"Image test\", \"target\": \"$TARGET\"}"
 check "POST /api/redirects" "$(request --request POST --header 'Content-Type: application/json' \
   --data "$body" "$BASE/api/redirects")" 201
-contains "public link built from the Host header" "$(cat "$WORK/body")" "\"public_url\":\"$BASE/redirect/$SLUG\""
+contains "public link on the default hostname" "$(cat "$WORK/body")" "\"public_url\":\"http://redirect.lan/redirect/$SLUG\""
 
 check "GET /redirect/$SLUG" "$(request "$BASE/redirect/$SLUG")" 302
 check "Location" "$(header location)" "$TARGET"
@@ -161,7 +161,11 @@ check "Cache-Control of the redirect" "$(header cache-control)" no-store
 check "GET /redirect/image-test/unknown" "$(request "$BASE/redirect/image-test/unknown")" 404
 contains "404 content type" "$(header content-type)" text/html
 
-# Safe default: X-Forwarded-* from anything but the loopback is ignored, the link keeps the real scheme
+# Without the hostname, links follow the address the browser used. Safe default: X-Forwarded-* from anything
+# but the loopback is ignored, the link keeps the real scheme
+settings="{\"hostname\": \"redirect.lan\", \"hostname_enabled\": false, \"api_enabled\": false}"
+check "PUT /api/settings (hostname off)" "$(request --request PUT --header 'Content-Type: application/json' \
+  --data "$settings" "$BASE/api/settings")" 200
 check "GET /api/redirects, forwarded https" "$(request --header 'X-Forwarded-Proto: https' "$BASE/api/redirects")" 200
 contains "forwarded headers ignored by default" "$(cat "$WORK/body")" "\"base_url\":\"$BASE\""
 
@@ -173,6 +177,8 @@ stop "$RUN_ID-a"
 
 # --- Second run: same volume, as after an upgrade, on another port, trusting every proxy ---------------------------
 CONTAINER_PORT=8081 start "$RUN_ID-b" --env PORT=8081 --env 'FORWARDED_ALLOW_IPS=*'
+check "GET /api/settings after a restart" "$(request "$BASE/api/settings")" 200
+contains "the settings survive a restart" "$(cat "$WORK/body")" '"hostname_enabled":false'
 check "GET /redirect/$SLUG after a restart" "$(request "$BASE/redirect/$SLUG")" 302
 check "Location after a restart" "$(header location)" "$TARGET"
 request --header 'X-Forwarded-Proto: https' "$BASE/api/redirects" >/dev/null
@@ -188,6 +194,11 @@ check "public link without a login" "$(request "$BASE/redirect/$SLUG")" 302
 check "POST /api/login" "$(request --cookie-jar "$WORK/cookies" --request POST \
   --header 'Content-Type: application/json' --data "$login_body" "$BASE/api/login")" 204
 check "GET /api/redirects with the session" "$(request --cookie "$WORK/cookies" "$BASE/api/redirects")" 200
+check "POST /api/key while the API is off (the default)" \
+  "$(request --cookie "$WORK/cookies" --request POST "$BASE/api/key")" 409
+settings="{\"hostname\": \"redirect.lan\", \"hostname_enabled\": false, \"api_enabled\": true}"
+check "PUT /api/settings (API on)" "$(request --cookie "$WORK/cookies" --request PUT \
+  --header 'Content-Type: application/json' --data "$settings" "$BASE/api/settings")" 200
 check "POST /api/key" "$(request --cookie "$WORK/cookies" --request POST "$BASE/api/key")" 201
 key="$(sed -E 's/.*"key":"([^"]+)".*/\1/' "$WORK/body")"
 contains "the key is shown once" "$key" "rdk_"
@@ -200,8 +211,14 @@ start "$RUN_ID-e" --env "ADMIN_PASSWORD=$PASSWORD"
 check "the API key after a restart" \
   "$(request --header "Authorization: Bearer $key" "$BASE/api/redirects")" 200
 check "the session after a restart" "$(request --cookie "$WORK/cookies" "$BASE/api/redirects")" 200
-case "$(docker logs "$RUN_ID-e" 2>&1)" in *"$key"*) fail "the API key appears in the logs" ;; esac
 stop "$RUN_ID-e"
+
+# API_ENABLED in the environment overrides the interface's choice
+start "$RUN_ID-f" --env "ADMIN_PASSWORD=$PASSWORD" --env API_ENABLED=false
+check "the API key with API_ENABLED=false" \
+  "$(request --header "Authorization: Bearer $key" "$BASE/api/redirects")" 403
+case "$(docker logs "$RUN_ID-f" 2>&1)" in *"$key"*) fail "the API key appears in the logs" ;; esac
+stop "$RUN_ID-f"
 
 # --- Third run: a user that cannot write to /data must get a clear error, not a crash loop ----------------------
 docker run --detach --name "$RUN_ID-c" --platform "$PLATFORM" --read-only --user 12345:12345 \

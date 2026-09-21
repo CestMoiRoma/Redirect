@@ -42,6 +42,7 @@ from .auth import (
 from .config import Settings
 from .db import Clock, Database, Redirect, SlugTakenError, timestamp, utc_now
 from .models import (
+    DEFAULT_HOSTNAME,
     REDIRECT_PREFIX,
     ApiKeyOut,
     AuthOut,
@@ -51,6 +52,8 @@ from .models import (
     RedirectIn,
     RedirectList,
     RedirectOut,
+    SettingsIn,
+    SettingsOut,
     is_valid_slug,
     public_url,
     validate_target,
@@ -80,6 +83,14 @@ SECURITY_HEADERS = {
 
 # Fields of RedirectIn, whose messages come from models.py
 FIELDS = ("slug", "name", "target")
+# Types of the PydanticCustomError raised by models.py: their message is the one to show
+CUSTOM_ERRORS = tuple(f"{name}_" for name in (*FIELDS, "hostname"))
+# Names in the settings table, next to those of auth.py
+HOSTNAME = "hostname"
+HOSTNAME_ENABLED = "hostname_enabled"
+API_ENABLED = "api_enabled"
+# Routes only the admin session may use, never an API key
+SESSION_ONLY = ("/api/key", "/api/settings")
 
 logger = logging.getLogger("redirect")
 
@@ -94,7 +105,7 @@ def _field_message(field: str, error_type: str, message: str) -> str:
     """Message for one invalid body field: ours when the model raised it, a generic one otherwise."""
     if error_type == "missing" and field in FIELDS:
         return t(f"errors.{field}_required")
-    if error_type.startswith(tuple(f"{name}_" for name in FIELDS)):  # a PydanticCustomError from models.py
+    if error_type.startswith(CUSTOM_ERRORS):
         return message
     return t("errors.value_invalid")
 
@@ -227,11 +238,15 @@ def _unauthorized(message: str) -> JSONResponse:
     return response
 
 
-class _AuthState:
-    """Loaded at startup, then kept in memory: checked on every API call without a database round trip."""
+class _State:
+    """Loaded at startup, then kept in memory: read on every request without a database round trip."""
 
     session_secret = ""
     api_key_hash: str | None = None
+    hostname = DEFAULT_HOSTNAME
+    hostname_enabled = True
+    # The interface's choice; API_ENABLED, when set, overrides it
+    api_enabled = False
 
 
 def create_app(
@@ -249,7 +264,7 @@ def create_app(
     configure_logging(settings.log_level)
     db = Database(settings.db_path, clock)
     password = settings.admin_password
-    auth = _AuthState()
+    auth = _State()
     throttle = LoginThrottle()
 
     @asynccontextmanager
@@ -257,6 +272,9 @@ def create_app(
         db.migrate()
         auth.session_secret = db.setting_or_create(SESSION_SECRET, new_secret)
         auth.api_key_hash = db.setting(API_KEY_HASH)
+        auth.hostname = db.setting(HOSTNAME) or DEFAULT_HOSTNAME
+        auth.hostname_enabled = db.setting(HOSTNAME_ENABLED) != "0"
+        auth.api_enabled = db.setting(API_ENABLED) == "1"
         if password is None:
             logger.warning("ADMIN_PASSWORD is not set: anyone who can reach Redirect can change its redirects")
         logger.info("Redirect %s ready, database %s", __version__, settings.db_path)
@@ -280,6 +298,9 @@ def create_app(
     # Added before the two middlewares below, so it runs inside them: a 413 carries the security headers too
     app.add_middleware(BodySizeLimit)
 
+    def api_enabled() -> bool:
+        return settings.api_enabled if settings.api_enabled is not None else auth.api_enabled
+
     def logged_in(request: Request) -> bool:
         token = request.cookies.get(SESSION_COOKIE)
         if password is None or token is None:
@@ -292,12 +313,14 @@ def create_app(
         path = _route_path(request)
         if password is None or logged_in(request):
             return await call_next(request)
-        if path == "/api/key":
+        if path in SESSION_ONLY:
             return _unauthorized(t("errors.session_required"))
         if _is_redirects_api(path):
             key = bearer_token(request.headers.get("authorization", ""))
             if key is None:
                 return _unauthorized(t("errors.login_required"))
+            if not api_enabled():
+                return _error(403, t("errors.api_disabled"))
             if not api_key_matches(key, auth.api_key_hash):
                 return _unauthorized(t("errors.api_key_invalid"))
         return await call_next(request)
@@ -313,8 +336,14 @@ def create_app(
         return response
 
     def base_url(request: Request) -> str:
-        """PUBLIC_BASE_URL when set, else what the browser used to reach us (Host header)."""
-        return settings.public_base_url or str(request.base_url).rstrip("/")
+        """PUBLIC_BASE_URL when set, else the hostname of the settings, else what the browser used (Host header)."""
+        if settings.public_base_url:
+            return settings.public_base_url
+        if auth.hostname_enabled:
+            scheme = request.url.scheme
+            port = "" if scheme == "https" or settings.port == 80 else f":{settings.port}"
+            return f"{scheme}://{auth.hostname}{port}"
+        return str(request.base_url).rstrip("/")
 
     def out(redirect: Redirect, request: Request) -> RedirectOut:
         return RedirectOut(public_url=public_url(base_url(request), redirect.slug), **vars(redirect))
@@ -403,6 +432,8 @@ def create_app(
     def regenerate_api_key(response: Response) -> Response | NewApiKeyOut:
         if (disabled := key_disabled()) is not None:
             return disabled
+        if not api_enabled():
+            return _error(409, t("errors.api_disabled_key"))
         key = API_KEY_PREFIX + new_key()
         hint = key[:API_KEY_HINT_LENGTH]
         created_at = timestamp(clock())
@@ -413,6 +444,38 @@ def create_app(
         # The only response that ever carries the key: no cache may keep it
         response.headers["Cache-Control"] = "no-store"
         return NewApiKeyOut(key=key, hint=hint, created_at=created_at)
+
+    def settings_out() -> SettingsOut:
+        return SettingsOut(
+            hostname=auth.hostname,
+            hostname_enabled=auth.hostname_enabled,
+            public_base_url=settings.public_base_url,
+            api_enabled=api_enabled(),
+            api_forced=settings.api_enabled is not None,
+        )
+
+    @app.get("/api/settings")
+    def get_settings() -> SettingsOut:
+        return settings_out()
+
+    @app.put("/api/settings", response_model=SettingsOut, responses={409: {"model": ErrorOut}})
+    def put_settings(body: SettingsIn) -> Response | SettingsOut:
+        if settings.api_enabled is not None and body.api_enabled != settings.api_enabled:
+            return _error(409, t("errors.api_forced"))
+        values = {HOSTNAME: body.hostname, HOSTNAME_ENABLED: "1" if body.hostname_enabled else "0"}
+        if settings.api_enabled is None:
+            values[API_ENABLED] = "1" if body.api_enabled else "0"
+        db.set_settings(values)
+        auth.hostname, auth.hostname_enabled = body.hostname, body.hostname_enabled
+        if settings.api_enabled is None:
+            auth.api_enabled = body.api_enabled
+        logger.info(
+            "settings: hostname %s (%s), API %s",
+            body.hostname,
+            "on" if body.hostname_enabled else "off",
+            "on" if api_enabled() else "off",
+        )
+        return settings_out()
 
     @app.get("/api/redirects")
     def list_redirects(request: Request) -> RedirectList:

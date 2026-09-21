@@ -123,7 +123,11 @@ TARGET_PAGE = """<!doctype html>
 def app_server(data_dir: Path, password: str | None = ADMIN_PASSWORD) -> Iterator[str]:
     """The real app, in this process, on a free port. Backend clock frozen at the golden time, fixed API keys."""
     settings = Settings(
-        data_dir=data_dir, public_base_url=PUBLIC_BASE_URL, log_level="WARNING", admin_password=password
+        data_dir=data_dir,
+        public_base_url=PUBLIC_BASE_URL,
+        log_level="WARNING",
+        admin_password=password,
+        api_enabled=True,
     )
     bodies = itertools.cycle(KEY_BODIES)
     app = create_app(settings, clock=lambda: golden.GOLDEN_TIME, new_key=lambda: next(bodies))

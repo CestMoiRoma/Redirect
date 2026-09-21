@@ -12,8 +12,12 @@ SLUG_MAX_LENGTH = 255
 NAME_MAX_LENGTH = 100
 TARGET_MAX_LENGTH = 2048
 REDIRECT_PREFIX = "/redirect/"
+HOSTNAME_MAX_LENGTH = 253
+DEFAULT_HOSTNAME = "redirect.lan"
 
 _SEGMENT = re.compile(r"[A-Za-z0-9._-]+")
+# One label of a host name (RFC 1123): letters, digits and inner dashes, 63 characters at most
+_LABEL = re.compile(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?")
 _ALLOWED_SCHEMES = ("http", "https")
 # Characters kept as-is when percent-encoding a non-ASCII target (RFC 3986 reserved + unreserved + "%")
 _URL_SAFE = "/:@!$&'()*+,;=?#[]%-._~"
@@ -110,6 +114,16 @@ def validate_target(value: str) -> str:
     return target
 
 
+def validate_hostname(value: str) -> str:
+    """A host name such as redirect.lan, lower-cased, without a final dot."""
+    hostname = value.strip().lower().rstrip(".")
+    if not hostname:
+        raise _error("hostname_required")
+    if len(hostname) > HOSTNAME_MAX_LENGTH or not all(_LABEL.fullmatch(label) for label in hostname.split(".")):
+        raise _error("hostname_invalid")
+    return hostname
+
+
 def public_url(base_url: str, slug: str) -> str:
     """The link people are given: <base>/redirect/<slug>."""
     return base_url.rstrip("/") + REDIRECT_PREFIX + slug
@@ -189,3 +203,28 @@ class NewApiKeyOut(BaseModel):
     key: str
     hint: str
     created_at: str
+
+
+class SettingsIn(BaseModel):
+    """Body of PUT /api/settings."""
+
+    hostname: str
+    hostname_enabled: bool
+    api_enabled: bool
+
+    @field_validator("hostname")
+    @classmethod
+    def _hostname(cls, value: str) -> str:
+        return validate_hostname(value)
+
+
+class SettingsOut(BaseModel):
+    """Body of GET and PUT /api/settings: the stored values, and what the environment imposes on them."""
+
+    hostname: str
+    hostname_enabled: bool
+    # PUBLIC_BASE_URL, when set, makes the links and wins over the hostname
+    public_base_url: str | None
+    api_enabled: bool
+    # True when API_ENABLED sets api_enabled: the interface cannot change it
+    api_forced: bool

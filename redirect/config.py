@@ -11,6 +11,8 @@ DB_FILENAME = "redirect.db"
 # The levels both logging and uvicorn know
 LOG_LEVELS = ("DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL")
 ADMIN_PASSWORD_MIN_LENGTH = 8
+_TRUE = ("true", "1", "yes", "on")
+_FALSE = ("false", "0", "no", "off")
 
 
 @dataclass(frozen=True)
@@ -21,6 +23,8 @@ class Settings:
     log_level: str = "INFO"
     # None: no login, the interface and the API are open (a warning says so). Never shown in a repr.
     admin_password: str | None = field(default=None, repr=False)
+    # None: the interface switches the scripts' API on and off. True or False: forced by API_ENABLED.
+    api_enabled: bool | None = None
 
     @property
     def db_path(self) -> Path:
@@ -46,10 +50,14 @@ class Settings:
             password = ""
         elif len(password) < ADMIN_PASSWORD_MIN_LENGTH:
             raise ValueError(f"ADMIN_PASSWORD must be at least {ADMIN_PASSWORD_MIN_LENGTH} characters long")
+        api_raw = env.get("API_ENABLED", "").strip().lower()
+        if api_raw and api_raw not in _TRUE + _FALSE:
+            raise ValueError(f"API_ENABLED must be true or false, got {env['API_ENABLED']!r}")
         return cls(
             port=port,
             data_dir=Path(env.get("DATA_DIR", "").strip() or DEFAULT_DATA_DIR),
             public_base_url=base,
             log_level=level_raw.upper(),
             admin_password=password or None,
+            api_enabled=(api_raw in _TRUE) if api_raw else None,
         )

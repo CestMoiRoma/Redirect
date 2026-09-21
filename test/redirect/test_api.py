@@ -149,10 +149,11 @@ def test_interactive_docs_are_disabled(client):
 def test_list_is_empty_on_a_new_database(client):
     response = client.get("/api/redirects")
     assert response.status_code == 200
-    assert response.json() == {"base_url": "http://testserver", "redirects": []}
+    assert response.json() == {"base_url": "http://redirect.lan", "redirects": []}
 
 
-def test_list_uses_the_host_header_without_public_base_url(client):
+def test_list_uses_the_host_header_without_public_base_url_nor_hostname(client):
+    client.put("/api/settings", json={"hostname": "redirect.lan", "hostname_enabled": False, "api_enabled": False})
     create(client, "wiki")
     body = client.get("/api/redirects", headers={"Host": "10.0.0.5:8080"}).json()
     assert body["base_url"] == "http://10.0.0.5:8080"

@@ -12,7 +12,7 @@ from redirect.config import Settings
 
 PASSWORD = "correct horse battery"
 LOGIN_REQUIRED = {"detail": "Log in to manage the redirects.", "errors": {}}
-SESSION_REQUIRED = {"detail": "Log in to the interface to manage the API key.", "errors": {}}
+SESSION_REQUIRED = {"detail": "Log in to the interface to change the settings or the API key.", "errors": {}}
 KEY_INVALID = {"detail": "This API key is not valid.", "errors": {}}
 WRONG_PASSWORD = {"detail": "Wrong password.", "errors": {}}
 KEY_NEEDS_PASSWORD = {
@@ -36,8 +36,8 @@ def keys():
 
 @pytest.fixture
 def admin(make_client):
-    """An app with a password, not logged in."""
-    return make_client(admin_password=PASSWORD, new_key=keys())
+    """An app with a password and the API forced on (API_ENABLED=true), not logged in."""
+    return make_client(admin_password=PASSWORD, new_key=keys(), api_enabled=True)
 
 
 def log_in(client, password: str = PASSWORD):
@@ -104,7 +104,7 @@ def test_the_interface_and_the_health_check_stay_public(admin, path):
 def test_public_links_stay_public(make_client):
     open_client = make_client()
     create(open_client, "wiki", target="http://wiki.example/")
-    guarded = make_client(admin_password=PASSWORD)
+    guarded = make_client(admin_password=PASSWORD, api_enabled=True)
     response = guarded.get("/redirect/wiki", follow_redirects=False)
     assert response.status_code == 302
     assert response.headers["location"] == "http://wiki.example/"
@@ -170,7 +170,7 @@ def test_a_session_expires_after_30_days(logged_in, clock):
 
 def test_a_session_survives_a_restart(make_client, logged_in):
     cookie = logged_in.cookies.get("redirect_session")
-    restarted = make_client(admin_password=PASSWORD)
+    restarted = make_client(admin_password=PASSWORD, api_enabled=True)
     restarted.cookies.set("redirect_session", cookie)
     assert restarted.get("/api/redirects").status_code == 200
 
@@ -228,20 +228,20 @@ def test_generating_a_key_shows_it_once(logged_in):
 def test_the_key_opens_the_redirects_api(make_client, logged_in, method, path, body):
     key = logged_in.post("/api/key").json()["key"]
     create(logged_in, "docs")
-    script = make_client(admin_password=PASSWORD)
+    script = make_client(admin_password=PASSWORD, api_enabled=True)
     assert script.request(method, path, json=body, headers=bearer(key)).status_code in (200, 201, 204)
 
 
 def test_the_scheme_is_case_insensitive(make_client, logged_in):
     key = logged_in.post("/api/key").json()["key"]
-    script = make_client(admin_password=PASSWORD)
+    script = make_client(admin_password=PASSWORD, api_enabled=True)
     assert script.get("/api/redirects", headers={"Authorization": f"bearer  {key} "}).status_code == 200
 
 
 @pytest.mark.parametrize("header", ["Bearer rdk_nope", "Bearer rdk_key-1x", "Basic cmRrX2tleS0x"])
 def test_a_wrong_key_is_refused(make_client, logged_in, header):
     logged_in.post("/api/key")
-    script = make_client(admin_password=PASSWORD)
+    script = make_client(admin_password=PASSWORD, api_enabled=True)
     response = script.get("/api/redirects", headers={"Authorization": header})
     assert response.status_code == 401
     assert response.json() == (LOGIN_REQUIRED if header.startswith("Basic") else KEY_INVALID)
@@ -257,20 +257,20 @@ def test_regenerating_replaces_the_key_at_once(make_client, logged_in):
     first = logged_in.post("/api/key").json()["key"]
     second = logged_in.post("/api/key").json()["key"]
     assert (first, second) == ("rdk_key-1", "rdk_key-2")
-    script = make_client(admin_password=PASSWORD)
+    script = make_client(admin_password=PASSWORD, api_enabled=True)
     assert script.get("/api/redirects", headers=bearer(first)).status_code == 401
     assert script.get("/api/redirects", headers=bearer(second)).status_code == 200
 
 
 def test_the_key_survives_a_restart(make_client, logged_in):
     key = logged_in.post("/api/key").json()["key"]
-    restarted = make_client(admin_password=PASSWORD)
+    restarted = make_client(admin_password=PASSWORD, api_enabled=True)
     assert restarted.get("/api/redirects", headers=bearer(key)).status_code == 200
 
 
 def test_the_key_does_not_manage_the_key(make_client, logged_in):
     key = logged_in.post("/api/key").json()["key"]
-    script = make_client(admin_password=PASSWORD)
+    script = make_client(admin_password=PASSWORD, api_enabled=True)
     for method in ("GET", "POST"):
         response = script.request(method, "/api/key", headers=bearer(key))
         assert response.status_code == 401

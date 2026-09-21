@@ -465,3 +465,11 @@ def test_unknown_paths_outside_redirect_keep_the_json_404(client, path):
 def test_api_list_is_the_list_of_redirects(client):
     create(client, "wiki")
     assert client.get("/api/list").json() == client.get("/api/redirects").json()
+
+
+def test_the_api_refuses_a_reserved_section(client):
+    response = client.post("/api/redirects", json={**BUDGET, "slug": "QRcodes/menu"})
+    assert response.status_code == 422
+    assert response.json() == invalid(
+        {"slug": "Paths starting with Api, QRcodes or NanoURL are reserved for Redirect's own sections."}
+    )

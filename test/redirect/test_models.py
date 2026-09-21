@@ -342,3 +342,26 @@ def test_texts_keep_unknown_placeholders_and_fail_on_unknown_keys():
     assert strings.t("list.count.other") == "{count} redirects"
     with pytest.raises(KeyError):
         strings.t("no.such.key")
+
+
+# --- Reserved sections --------------------------------------------------------------------------------------
+
+RESERVED = "Paths starting with Api, QRcodes or NanoURL are reserved for Redirect's own sections."
+
+
+@pytest.mark.parametrize("slug", ["Api", "api/x", "QRcodes/menu", "qrcodes", "NanoURL/a/b", "NANOURL/x"])
+def test_reserved_sections_are_refused(slug):
+    with pytest.raises(ValidationError) as info:
+        RedirectIn(slug=slug, name="n", target="http://t/")
+    assert info.value.errors()[0]["msg"] == RESERVED
+
+
+@pytest.mark.parametrize("slug", ["apis", "my/Api", "QRcodes2", "nano", "x/NanoURL/y"])
+def test_names_close_to_the_sections_are_allowed(slug):
+    assert RedirectIn(slug=slug, name="n", target="http://t/").slug == slug
+
+
+def test_the_reserved_check_comes_after_the_path_rules():
+    with pytest.raises(ValidationError) as info:
+        RedirectIn(slug="Api//x", name="n", target="http://t/")
+    assert info.value.errors()[0]["msg"] == "The path cannot start or end with /, or contain //."

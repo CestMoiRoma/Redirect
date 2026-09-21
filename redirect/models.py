@@ -13,6 +13,9 @@ NAME_MAX_LENGTH = 100
 TARGET_MAX_LENGTH = 2048
 REDIRECT_PREFIX = "/redirect/"
 LINKS_PREFIX = "/links/"
+# First path segments kept for Redirect's own sections (the QR codes, the NanoURLs, the API): a redirect created
+# by hand cannot start with them, whatever the case
+RESERVED_SECTIONS = ("Api", "QRcodes", "NanoURL")
 HOSTNAME_MAX_LENGTH = 253
 DEFAULT_HOSTNAME = "redirect.lan"
 
@@ -47,6 +50,19 @@ def validate_slug(value: str) -> str:
         raise _error("slug_dot_segment")
     if not all(_SEGMENT.fullmatch(segment) for segment in segments):
         raise _error("slug_invalid")
+    return slug
+
+
+def is_reserved(slug: str) -> bool:
+    first = slug.split("/", 1)[0].casefold()
+    return any(first == section.casefold() for section in RESERVED_SECTIONS)
+
+
+def validate_user_slug(value: str) -> str:
+    """A path typed by a person or a script: valid, and outside the reserved sections."""
+    slug = validate_slug(value)
+    if is_reserved(slug):
+        raise _error("slug_reserved")
     return slug
 
 
@@ -152,7 +168,7 @@ class RedirectIn(BaseModel):
     @field_validator("slug")
     @classmethod
     def _slug(cls, value: str) -> str:
-        return validate_slug(value)
+        return validate_user_slug(value)
 
     @field_validator("name")
     @classmethod

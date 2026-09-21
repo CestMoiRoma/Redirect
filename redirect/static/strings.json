@@ -107,6 +107,7 @@
   "errors.slug_dot_segment": "A path segment cannot be . or ..",
   "errors.slug_invalid": "Use only letters, digits, dots, dashes and underscores, with / between segments.",
   "errors.slug_taken": "This path is already used by another redirect.",
+  "errors.slug_reserved": "Paths starting with Api, QRcodes or NanoURL are reserved for Redirect's own sections.",
   "errors.name_required": "Enter a name.",
   "errors.name_too_long": "The name must be at most 100 characters.",
   "errors.name_invalid": "The name cannot contain control characters.",

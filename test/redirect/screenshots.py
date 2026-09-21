@@ -214,6 +214,8 @@ class Watch:
                 entry["seen"] = True
                 return
         self.errors.append(f"console.error: {message.text} ({url})")
+        # Printed now too, between the capture names: the log then shows where it happened
+        print(f"  unexpected {self.errors[-1]}", flush=True)
 
     @contextmanager
     def http_error(self, page: Page, url: str, status: int) -> Iterator[None]:
@@ -639,6 +641,10 @@ def main_walk(run: Scenario, data_dir: Path) -> None:
         page.bring_to_front()
         page.reload()
         assert page.evaluate("() => navigator.clipboard.readText()") == PREFIX + "wiki"
+        # Let this load finish (its settings come last) before the next step answers /api/redirects with a 500:
+        # a request still on its way would get that 500 too
+        expect_rows(page, FIXTURE_ROWS)
+        expect(page.locator("#settings-hostname")).to_have_value("redirect.lan")
 
         # --- The list cannot be loaded
         api = base + "/api/redirects"

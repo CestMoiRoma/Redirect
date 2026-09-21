@@ -47,6 +47,7 @@ from .config import Settings
 from .db import Clock, CodeMaker, Database, Redirect, SlugTakenError, new_code, timestamp, utc_now
 from .mdns import Announcer, ZeroconfAnnouncer
 from .qrcode import render_svg
+from .server import request_drop
 from .models import (
     DEFAULT_HOSTNAME,
     LINKS_PREFIX,
@@ -193,16 +194,10 @@ def configure_logging(level: str) -> None:
     logger.setLevel(level)
 
 
-# The page's link to the interface, left out where the interface is out of reach
-_BACK_LINK = re.compile(r"\s*<a [^>]*>\{\{ back \}\}</a>")
-
-
-def render_page(title: str, text: str, link: bool = True) -> str:
+def render_page(title: str, text: str) -> str:
     """A server-rendered page: texts come from strings.json, every inserted value is HTML-escaped."""
     values = {"title": title, "text": text, "back": t("page.back")}
     template = PAGE_TEMPLATE.read_text(encoding="utf-8")
-    if not link:
-        template = _BACK_LINK.sub("", template)
     return _TEMPLATE_KEY.sub(lambda m: html.escape(values[m.group(1)]), template)
 
 
@@ -497,7 +492,8 @@ def create_app(
 
     @app.middleware("http")
     async def only_local(request: Request, call_next: Callable[[Request], Awaitable[Response]]) -> Response:
-        """Runs before the login check: an address outside the local network learns nothing but a 403."""
+        """Runs before the login check. An address outside the local network learns nothing: under
+        `python -m redirect` its connection is reset, as if no server were there; elsewhere it gets a bare 403."""
         path = _route_path(request)
         if (
             not local_only()
@@ -506,10 +502,8 @@ def create_app(
         ):
             return await call_next(request)
         logger.warning("refused %s from %s: not on the local network", path[:MAX_ECHOED_PATH], request.client)
-        if path.startswith("/api/"):
-            return _error(403, t("errors.local_only"))
-        # No link to the interface: from there, it would only lead to this page again
-        return HTMLResponse(render_page(t("denied.title"), t("denied.text"), link=False), status_code=403)
+        request_drop(request.scope)
+        return Response(status_code=403)
 
     def running(status: int) -> PlainTextResponse:
         return PlainTextResponse(t("headless.running"), status_code=status, headers={"Cache-Control": "no-store"})

@@ -74,7 +74,7 @@ The password travels as typed. Over plain HTTP, keep Redirect on a network you t
 
 ### Keep the interface on the local network
 
-Redirect's interface and API only answer addresses of the local network: the private IPv4 ranges, loopback, link-local, IPv6 ULA, and `100.64.0.0/10`, which Tailscale and similar VPNs use. Any other address gets a 403, so an interface exposed to the internet by mistake stays closed. The links under `/redirect/` and `/links/` work from anywhere, which is what a printed QR code needs. The Access card turns this off, and `LOCAL_ONLY` forces it either way.
+Redirect's interface and API only answer addresses of the local network: the private IPv4 ranges, loopback, link-local, IPv6 ULA, and `100.64.0.0/10`, which Tailscale and similar VPNs use. Any other address gets no answer at all: its connection is reset, and its browser shows the same page as for a server that does not exist. An interface exposed to the internet by mistake stays closed and does not even show that it is there. The links under `/redirect/` and `/links/` work from anywhere, which is what a printed QR code needs. The Access card turns this off, and `LOCAL_ONLY` forces it either way.
 
 Behind a reverse proxy, Redirect sees the proxy's address, which is local, for every visitor. Set `FORWARDED_ALLOW_IPS` to the proxy's address so that Redirect reads the visitor's real address from `X-Forwarded-For`.
 
@@ -131,7 +131,7 @@ The other routes take the same key:
 - `POST /api/nanourls` with a `name`, a `target` and an optional `link_host` (`ip`, the default, or `hostname`) creates a NanoURL and answers 201 with its `id` and its `short_url`. `GET` lists them, `PUT` and `DELETE /api/nanourls/<id>` change or remove one.
 - `POST /api/qrcodes` with a `name`, a `target`, an optional `link_host` and an optional `design` creates a QR code and answers 201 with its `id` and the image itself in `svg`. `GET /api/qrcodes/<id>/svg` serves the file, and `PUT` and `DELETE /api/qrcodes/<id>` change or remove one. A `design` holds `color`, `eye_color` and `background` (`#rrggbb`, or `transparent` for the background), `module_style` (`square`, `rounded` or `dots`), `eye_style` (`square`, `rounded` or `circle`), `logo` (a `data:image/...;base64,` URI), `logo_size` (0.1 to 0.3) and `margin` (0 to 10).
 
-Errors come back as JSON with a `detail` message and, for invalid fields, one message per field in `errors`: 401 for a missing or wrong key, 403 while the API is off or from outside the local network, 404 for an unknown id, 409 for a path or a name already taken, 422 for invalid values. The key only manages redirects: generating a new key takes a login in the interface.
+Errors come back as JSON with a `detail` message and, for invalid fields, one message per field in `errors`: 401 for a missing or wrong key, 403 while the API is off, 404 for an unknown id, 409 for a path or a name already taken, 422 for invalid values. The key only manages redirects: generating a new key takes a login in the interface.
 
 ## Run it without the interface
 

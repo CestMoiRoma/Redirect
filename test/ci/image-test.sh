@@ -189,6 +189,12 @@ check "GET /redirect/$SLUG after a restart" "$(request "$BASE/redirect/$SLUG")" 
 check "Location after a restart" "$(header location)" "$TARGET"
 request --header 'X-Forwarded-Proto: https' "$BASE/api/redirects" >/dev/null
 contains "FORWARDED_ALLOW_IPS honoured" "$(cat "$WORK/body")" "\"base_url\":\"https://${BASE#http://}\""
+# From an address outside the local network: the connection is reset, no HTTP answer at all (curl reads 000)...
+outside='X-Forwarded-For: 203.0.113.9'
+check "the interface, from outside" "$(request --header "$outside" "$BASE/" 2>/dev/null)" 000
+check "the API, from outside" "$(request --header "$outside" "$BASE/api/list" 2>/dev/null)" 000
+# ...while the links keep working from anywhere
+check "a link, from outside" "$(request --header "$outside" "$BASE/redirect/$SLUG")" 302
 stop "$RUN_ID-b"
 
 # --- With ADMIN_PASSWORD: log in, generate an API key; both must survive a restart on the same volume ---------

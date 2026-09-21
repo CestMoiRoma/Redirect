@@ -20,7 +20,7 @@
 
   "access.title": "Access",
   "access.toggle": "Only answer on the local network",
-  "access.help": "From any other address, the interface and the API answer 403. The links under /redirect/ and /links/ keep working from anywhere.",
+  "access.help": "Any other address gets no answer at all, as if no server were there. The links under /redirect/ and /links/ keep working from anywhere.",
   "access.forced_on": "Turned on by LOCAL_ONLY in the container's environment.",
   "access.forced_off": "Turned off by LOCAL_ONLY in the container's environment.",
   "access.off": "The interface and the API answer from any address: keep Redirect behind a firewall or a reverse proxy.",
@@ -191,7 +191,6 @@
   "errors.api_disabled_key": "Turn the API on before generating a key.",
   "errors.api_forced": "API_ENABLED in the container's environment decides whether the API is on.",
   "errors.local_only_forced": "LOCAL_ONLY in the container's environment decides whether Redirect only answers on the local network.",
-  "errors.local_only": "Redirect's interface and API only answer on the local network.",
   "errors.key_required": "Send the API key: Authorization: Bearer <key>.",
   "errors.hostname_required": "Enter a hostname.",
   "errors.hostname_invalid": "Use a hostname such as redirect.lan: letters, digits and dashes, with dots between the parts.",
@@ -220,8 +219,6 @@
   "notfound.text": "No redirect exists for {path}. The link may have been changed or removed.",
   "notfound.text_unknown": "No redirect exists at this address. The link may have been changed or removed.",
   "headless.running": "Redirect is running",
-  "denied.title": "Not available from here",
-  "denied.text": "Redirect's interface only answers on the local network. The links it gives out work from anywhere.",
   "unavailable.title": "Redirect is unavailable",
   "unavailable.text": "The database cannot be reached right now. Try the link again in a moment.",
 

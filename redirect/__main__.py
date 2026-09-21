@@ -9,6 +9,7 @@ import sys
 import uvicorn
 
 from .config import Settings
+from .server import DroppingH11Protocol
 
 USAGE = "usage: python -m redirect [api-key]"
 
@@ -45,6 +46,8 @@ def main() -> None:
         log_level=settings.log_level.lower(),
         proxy_headers=True,
         server_header=False,
+        # Resets the connection of a request refused by "local only", instead of answering it
+        http=DroppingH11Protocol,
     )
 
 

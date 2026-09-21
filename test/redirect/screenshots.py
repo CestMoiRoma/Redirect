@@ -26,6 +26,7 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent / "ci"))
 import golden  # noqa: E402
 import uvicorn  # noqa: E402
+from playwright.sync_api import Error as PlaywrightError  # noqa: E402
 from playwright.sync_api import Page, expect, sync_playwright  # noqa: E402
 
 from seed import FIXTURE_REDIRECTS  # noqa: E402
@@ -33,6 +34,7 @@ from support import FakeAnnouncer  # noqa: E402
 
 from redirect.config import Settings  # noqa: E402
 from redirect.main import create_app  # noqa: E402
+from redirect.server import DroppingH11Protocol  # noqa: E402
 
 FIXTURE_DB = HERE / "fixtures" / "redirect.db"
 # The links use the default hostname, redirect.lan, on port 80: the router below answers for it
@@ -176,7 +178,8 @@ def app_server(
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     sock.bind(("127.0.0.1", 0))
     port = sock.getsockname()[1]
-    server = uvicorn.Server(uvicorn.Config(app, log_level="warning", access_log=False))
+    # Redirect's own protocol, as python -m redirect runs it: refused requests get their connection reset
+    server = uvicorn.Server(uvicorn.Config(app, http=DroppingH11Protocol, log_level="warning", access_log=False))
     thread = threading.Thread(target=server.run, kwargs={"sockets": [sock]}, daemon=True)
     thread.start()
     deadline = time.monotonic() + 30
@@ -1101,25 +1104,31 @@ def access_walk(run: Scenario, data_dir: Path) -> None:
         expect(local_only).to_be_checked()
         expect(local_only).to_be_enabled()
         expect(card.locator(".access-help")).to_have_text(
-            "From any other address, the interface and the API answer 403."
+            "Any other address gets no answer at all, as if no server were there."
             " The links under /redirect/ and /links/ keep working from anywhere."
         )
         expect(card.locator("#access-off")).to_be_hidden()
 
-        # --- From outside: the page says no, the links still work
+        # --- From outside: no answer at all, the browser's own error page; the links still work
         outside = run.open(base)
         outside.set_extra_http_headers(OUTSIDE)
-        with run.watch.http_error(outside, base + "/", 403):
-            response = outside.goto(base + "/")
-        assert response is not None and response.status == 403
-        expect(outside).to_have_title("Not available from here")
-        expect(outside.locator(".standalone p")).to_have_text(
-            "Redirect's interface only answers on the local network. The links it gives out work from anywhere."
-        )
-        expect(outside.get_by_role("link")).to_have_count(0)
-        run.shot(outside, "41-denied", full_page=False, fonts=INTER)
+        try:
+            outside.goto(base + "/")
+        except PlaywrightError as error:
+            assert "net::ERR_CONNECTION_RESET" in str(error), error
+        else:
+            raise AssertionError("the interface answered an address outside the local network")
+        # Chromium shows its own page, "This site can't be reached", once it has loaded it
+        outside.wait_for_url(re.compile(r"^chrome-error://"))
+        outside.wait_for_load_state("load")
+        run.shot(outside, "41-denied", full_page=False, fonts=())
         assert outside.request.get(base + "/redirect/wiki", headers=OUTSIDE, max_redirects=0).status == 302
-        assert outside.request.get(base + "/api/list", headers=OUTSIDE).status == 403
+        try:
+            outside.request.get(base + "/api/list", headers=OUTSIDE)
+        except PlaywrightError as error:
+            assert "ECONNRESET" in str(error) or "socket hang up" in str(error), error
+        else:
+            raise AssertionError("the API answered an address outside the local network")
 
         # --- Turned off: a warning here, and the outside reaches the login screen
         local_only.uncheck()

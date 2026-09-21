@@ -1,15 +1,20 @@
 """Local only: the interface and the API refuse addresses outside the local network; the links stay public."""
 
+import logging
+import socket
+import threading
+import time
+
 import pytest
+import uvicorn
 from fastapi.testclient import TestClient
-from support import create
+from support import FakeAnnouncer, create
 
 from redirect.config import Settings
-from redirect.main import is_local_address
+from redirect.main import create_app, is_local_address
+from redirect.server import DroppingH11Protocol
 
 PUBLIC = ("203.0.113.9", 40000)
-DENIED_JSON = {"detail": "Redirect's interface and API only answer on the local network.", "errors": {}}
-DENIED_TEXT = "Redirect's interface only answers on the local network. The links it gives out work from anywhere."
 
 
 def from_address(client, address=PUBLIC) -> TestClient:
@@ -45,23 +50,14 @@ def test_other_addresses(host):
 
 
 @pytest.mark.parametrize(
-    "path", ["/api/redirects", "/api/list", "/api/logs", "/api/settings", "/api/auth", "/api/qrcodes"]
+    "path", ["/", "/api/redirects", "/api/list", "/api/logs", "/api/settings", "/api/auth", "/api/qrcodes"]
 )
-def test_the_api_refuses_a_public_address(client, path):
+def test_a_public_address_learns_nothing(client, path):
+    """Without the server's protocol (here, the test client) a refusal is a bare 403: no page, no JSON."""
     response = from_address(client).get(path)
     assert response.status_code == 403
-    assert response.json() == DENIED_JSON
-    assert response.headers["x-content-type-options"] == "nosniff"
-
-
-def test_the_interface_refuses_a_public_address_with_a_page(client):
-    response = from_address(client).get("/")
-    assert response.status_code == 403
-    assert response.headers["content-type"] == "text/html; charset=utf-8"
-    assert "<title>Not available from here</title>" in response.text
-    assert f"<p>{DENIED_TEXT.replace("'", '&#x27;')}</p>" in response.text
-    # No link to the interface, which would only lead back here
-    assert "Open Redirect" not in response.text
+    assert response.content == b""
+    assert "content-type" not in response.headers
 
 
 def test_a_login_attempt_from_outside_learns_nothing(make_client):
@@ -129,3 +125,70 @@ def test_local_only_must_be_a_boolean():
     with pytest.raises(ValueError) as info:
         Settings.from_env({"LOCAL_ONLY": "lan"})
     assert str(info.value) == "LOCAL_ONLY must be true or false, got 'lan'"
+
+
+# --- Under the real server: the connection is reset, as if nothing listened -------------------------------
+
+
+@pytest.fixture
+def served(tmp_path):
+    """The app under uvicorn with Redirect's protocol, on a free port. X-Forwarded-For from 127.0.0.1 is trusted
+    (uvicorn's default), which lets the test speak from any address."""
+    app = create_app(Settings(data_dir=tmp_path), announcer=FakeAnnouncer())
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    sock.bind(("127.0.0.1", 0))
+    server = uvicorn.Server(uvicorn.Config(app, http=DroppingH11Protocol, log_level="warning", access_log=False))
+    thread = threading.Thread(target=server.run, kwargs={"sockets": [sock]}, daemon=True)
+    thread.start()
+    deadline = time.monotonic() + 30
+    while not server.started:
+        assert thread.is_alive() and time.monotonic() < deadline, "the server did not start"
+        time.sleep(0.05)
+    errors: list[str] = []
+
+    class Collect(logging.Handler):
+        def emit(self, record: logging.LogRecord) -> None:
+            errors.append(record.getMessage())
+
+    handler = Collect(level=logging.ERROR)
+    logging.getLogger("uvicorn.error").addHandler(handler)
+    yield sock.getsockname()[1], errors
+    logging.getLogger("uvicorn.error").removeHandler(handler)
+    server.should_exit = True
+    thread.join(30)
+    sock.close()
+
+
+def exchange(port: int, path: str, address: str | None = None) -> bytes:
+    """Sends one request and reads what comes back until the server closes (or resets) the connection."""
+    forwarded = f"X-Forwarded-For: {address}\r\n" if address else ""
+    request = f"GET {path} HTTP/1.1\r\nHost: 127.0.0.1\r\n{forwarded}Connection: close\r\n\r\n".encode()
+    with socket.create_connection(("127.0.0.1", port), timeout=10) as connection:
+        connection.sendall(request)
+        received = b""
+        try:
+            while chunk := connection.recv(4096):
+                received += chunk
+        except ConnectionResetError:
+            return received + b"<reset>"
+    return received
+
+
+@pytest.mark.parametrize("path", ["/", "/api/list", "/api/settings"])
+def test_under_the_server_a_public_address_gets_a_reset(served, path):
+    port, errors = served
+    assert exchange(port, path, "203.0.113.9") == b"<reset>"
+    # uvicorn sends nothing after the reset, and logs no error (no 500 behind the scenes)
+    assert errors == []
+
+
+def test_under_the_server_the_links_still_answer_a_public_address(served):
+    port, _ = served
+    assert exchange(port, "/redirect/nope", "203.0.113.9").startswith(b"HTTP/1.1 404 ")
+    assert exchange(port, "/api/health", "203.0.113.9").startswith(b"HTTP/1.1 200 ")
+
+
+def test_under_the_server_a_local_address_is_answered(served):
+    port, _ = served
+    assert exchange(port, "/api/list").startswith(b"HTTP/1.1 200 ")
+    assert exchange(port, "/api/list", "192.168.1.30").startswith(b"HTTP/1.1 200 ")

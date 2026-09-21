@@ -19,7 +19,7 @@ STRINGS = json.loads((STATIC / "strings.json").read_text(encoding="utf-8"))
 # The only absolute URL allowed in static/: the SVG namespace, an identifier that is never fetched
 ALLOWED_URLS = {"http://www.w3.org/2000/svg"}
 # Third-party packages the app may import: its runtime dependencies (pyproject.toml) and what they bring
-ALLOWED_THIRD_PARTY = {"fastapi", "pydantic", "pydantic_core", "starlette", "uvicorn"}
+ALLOWED_THIRD_PARTY = {"fastapi", "ifaddr", "pydantic", "pydantic_core", "starlette", "uvicorn", "zeroconf"}
 # Redirect never fetches, proxies or runs anything: no HTTP client, no raw socket, no subprocess
 FORBIDDEN_MODULES = {
     "requests",

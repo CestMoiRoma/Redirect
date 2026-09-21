@@ -21,6 +21,21 @@ class FrozenClock:
         self.now += timedelta(**delta)
 
 
+class FakeAnnouncer:
+    """Stands for the mDNS announcer: records what it is asked to publish, never touches the network."""
+
+    def __init__(self) -> None:
+        self.calls: list[str | None] = []
+        self.closed = False
+
+    def announce(self, hostname: str | None) -> bool:
+        self.calls.append(hostname)
+        return hostname is not None and hostname.endswith(".local")
+
+    def close(self) -> None:
+        self.closed = True
+
+
 def create(client: TestClient, slug: str, name: str = "Some name", target: str = "http://example.test/") -> dict:
     """POST a valid redirect and return its JSON body."""
     response = client.post("/api/redirects", json={"slug": slug, "name": name, "target": target})

@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
-from support import PUBLIC_BASE_URL, FrozenClock
+from support import PUBLIC_BASE_URL, FakeAnnouncer, FrozenClock
 
 import redirect.db
 from redirect.config import Settings
@@ -38,7 +38,9 @@ def make_client(tmp_path: Path, clock: FrozenClock) -> Iterator[Callable[..., Te
             admin_password=admin_password,
             api_enabled=api_enabled,
         )
-        app = create_app(settings, clock) if new_key is None else create_app(settings, clock, new_key)
+        announcer = FakeAnnouncer()
+        app = create_app(settings, clock, announcer=announcer, **({} if new_key is None else {"new_key": new_key}))
+        app.state.announcer = announcer
         client = TestClient(app, **client_options)
         client.__enter__()
         clients.append(client)

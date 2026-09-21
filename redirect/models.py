@@ -228,3 +228,5 @@ class SettingsOut(BaseModel):
     api_enabled: bool
     # True when API_ENABLED sets api_enabled: the interface cannot change it
     api_forced: bool
+    # True while the hostname, ending in .local, is announced on the LAN (mDNS)
+    mdns: bool

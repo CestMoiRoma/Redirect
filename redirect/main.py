@@ -1,5 +1,6 @@
 """FastAPI application: the redirect route, the JSON API and the static front end."""
 
+import asyncio
 import html
 import logging
 import mimetypes
@@ -41,6 +42,7 @@ from .auth import (
 )
 from .config import Settings
 from .db import Clock, Database, Redirect, SlugTakenError, timestamp, utc_now
+from .mdns import Announcer, ZeroconfAnnouncer
 from .models import (
     DEFAULT_HOSTNAME,
     REDIRECT_PREFIX,
@@ -247,12 +249,18 @@ class _State:
     hostname_enabled = True
     # The interface's choice; API_ENABLED, when set, overrides it
     api_enabled = False
+    # The hostname is announced on the LAN (mDNS)
+    mdns = False
 
 
 def create_app(
-    settings: Settings | None = None, clock: Clock = utc_now, new_key: Callable[[], str] = new_api_key_body
+    settings: Settings | None = None,
+    clock: Clock = utc_now,
+    new_key: Callable[[], str] = new_api_key_body,
+    announcer: Announcer | None = None,
 ) -> FastAPI:
-    """The app. `clock` and `new_key` are injected so tests and screenshots can freeze time and keys."""
+    """The app. `clock`, `new_key` and `announcer` are injected so tests and screenshots can freeze time and
+    keys, and stay off the network."""
     settings = settings or Settings.from_env()
     if settings.public_base_url is not None:
         try:
@@ -266,6 +274,10 @@ def create_app(
     password = settings.admin_password
     auth = _State()
     throttle = LoginThrottle()
+    mdns = announcer if announcer is not None else ZeroconfAnnouncer(settings.port)
+
+    def announced_name() -> str | None:
+        return auth.hostname if auth.hostname_enabled else None
 
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
@@ -275,10 +287,13 @@ def create_app(
         auth.hostname = db.setting(HOSTNAME) or DEFAULT_HOSTNAME
         auth.hostname_enabled = db.setting(HOSTNAME_ENABLED) != "0"
         auth.api_enabled = db.setting(API_ENABLED) == "1"
+        # In a thread: announcing probes the network for about a second
+        auth.mdns = await asyncio.to_thread(mdns.announce, announced_name())
         if password is None:
             logger.warning("ADMIN_PASSWORD is not set: anyone who can reach Redirect can change its redirects")
         logger.info("Redirect %s ready, database %s", __version__, settings.db_path)
         yield
+        await asyncio.to_thread(mdns.close)
         logger.info("Redirect stopped")
 
     app = FastAPI(
@@ -452,6 +467,7 @@ def create_app(
             public_base_url=settings.public_base_url,
             api_enabled=api_enabled(),
             api_forced=settings.api_enabled is not None,
+            mdns=auth.mdns,
         )
 
     @app.get("/api/settings")
@@ -466,7 +482,10 @@ def create_app(
         if settings.api_enabled is None:
             values[API_ENABLED] = "1" if body.api_enabled else "0"
         db.set_settings(values)
+        name_changed = (body.hostname, body.hostname_enabled) != (auth.hostname, auth.hostname_enabled)
         auth.hostname, auth.hostname_enabled = body.hostname, body.hostname_enabled
+        if name_changed:
+            auth.mdns = mdns.announce(announced_name())
         if settings.api_enabled is None:
             auth.api_enabled = body.api_enabled
         logger.info(

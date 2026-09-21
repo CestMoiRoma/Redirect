@@ -14,6 +14,7 @@ DEFAULTS = {
     "public_base_url": None,
     "api_enabled": False,
     "api_forced": False,
+    "mdns": False,
 }
 HOSTNAME_INVALID = "Use a hostname such as redirect.lan: letters, digits and dashes, with dots between the parts."
 API_DISABLED = {"detail": "The API is turned off. Turn it on in the interface, or with API_ENABLED.", "errors": {}}
@@ -105,6 +106,52 @@ def test_settings_survive_a_restart(make_client, client):
         "hostname_enabled": False,
         "api_enabled": True,
     }
+
+
+# --- mDNS: a hostname ending in .local is announced -------------------------------------------------------
+
+
+def calls(client) -> list[str | None]:
+    return client.app.state.announcer.calls
+
+
+def test_the_hostname_is_offered_to_mdns_at_startup(client):
+    # redirect.lan does not end in .local: nothing is announced
+    assert calls(client) == ["redirect.lan"]
+    assert client.get("/api/settings").json()["mdns"] is False
+
+
+def test_a_local_hostname_is_announced(client):
+    response = put(client, hostname="redirect.local")
+    assert response.json()["mdns"] is True
+    assert calls(client) == ["redirect.lan", "redirect.local"]
+    assert create(client, "wiki")["public_url"] == "http://redirect.local/redirect/wiki"
+
+
+def test_turning_the_hostname_off_withdraws_the_announcement(client):
+    put(client, hostname="redirect.local")
+    assert put(client, hostname="redirect.local", hostname_enabled=False).json()["mdns"] is False
+    assert calls(client)[-1] is None
+
+
+def test_other_changes_do_not_announce_again(client):
+    put(client, hostname="redirect.local")
+    put(client, hostname="redirect.local", api_enabled=True)
+    assert calls(client) == ["redirect.lan", "redirect.local"]
+
+
+def test_a_stored_local_hostname_is_announced_after_a_restart(make_client, client):
+    put(client, hostname="redirect.local")
+    restarted = make_client()
+    assert calls(restarted) == ["redirect.local"]
+    assert restarted.get("/api/settings").json()["mdns"] is True
+
+
+def test_the_announcement_ends_with_the_server(make_client):
+    client = make_client()
+    announcer = client.app.state.announcer
+    client.__exit__(None, None, None)
+    assert announcer.closed
 
 
 # --- The scripts' API switch ------------------------------------------------------------------------------

@@ -25,14 +25,16 @@ START_TIMEOUT=120
 cleanup() {
   local status=$?
   if [ "$status" -ne 0 ]; then
-    for name in "$RUN_ID-a" "$RUN_ID-b" "$RUN_ID-c" "$RUN_ID-d" "$RUN_ID-e" "$RUN_ID-f"; do
+    for name in "$RUN_ID-a" "$RUN_ID-b" "$RUN_ID-c" "$RUN_ID-d" "$RUN_ID-e" "$RUN_ID-f" "$RUN_ID-g"; do
       if docker container inspect "$name" >/dev/null 2>&1; then
         echo "--- logs of $name"
         docker logs --tail 50 "$name" 2>&1 || true
       fi
     done
   fi
-  docker rm --force "$RUN_ID-a" "$RUN_ID-b" "$RUN_ID-c" "$RUN_ID-d" "$RUN_ID-e" "$RUN_ID-f" >/dev/null 2>&1 || true
+  docker rm --force "$RUN_ID-a" "$RUN_ID-b" "$RUN_ID-c" "$RUN_ID-d" "$RUN_ID-e" "$RUN_ID-f" "$RUN_ID-g" \
+    >/dev/null 2>&1 || true
+  docker network rm "$RUN_ID-net" >/dev/null 2>&1 || true
   docker volume rm --force "$VOLUME" >/dev/null 2>&1 || true
   rm -rf "$WORK"
   exit "$status"
@@ -219,6 +221,33 @@ check "the API key with API_ENABLED=false" \
   "$(request --header "Authorization: Bearer $key" "$BASE/api/redirects")" 403
 case "$(docker logs "$RUN_ID-f" 2>&1)" in *"$key"*) fail "the API key appears in the logs" ;; esac
 stop "$RUN_ID-f"
+
+# --- mDNS: a .local hostname is announced; another machine of the network resolves it --------------------------
+# A Docker network stands for the LAN: multicast crosses it, as it crosses a real one with macvlan.
+docker network create "$RUN_ID-net" >/dev/null
+start "$RUN_ID-g" --network "$RUN_ID-net"
+address="$(docker inspect --format "{{(index .NetworkSettings.Networks \"$RUN_ID-net\").IPAddress}}" "$RUN_ID-g")"
+settings="{\"hostname\": \"redirect-test.local\", \"hostname_enabled\": true, \"api_enabled\": false}"
+check "PUT /api/settings (redirect-test.local)" "$(request --request PUT --header 'Content-Type: application/json' \
+  --data "$settings" "$BASE/api/settings")" 200
+contains "the hostname is announced" "$(cat "$WORK/body")" '"mdns":true'
+
+# What a neighbour sees: the service and the address of its host name, asked over mDNS
+resolve() {
+  docker run --rm --network "$RUN_ID-net" --platform "$PLATFORM" "$IMAGE" python -c "
+from zeroconf import Zeroconf
+zeroconf = Zeroconf()
+info = zeroconf.get_service_info('_http._tcp.local.', 'Redirect (redirect-test)._http._tcp.local.', timeout=5000)
+zeroconf.close()
+print(f'{info.server} {\",\".join(info.parsed_addresses())} {info.port}' if info else 'nothing')"
+}
+check "mDNS answer from another container" "$(resolve)" "redirect-test.local. $address 80"
+
+settings="{\"hostname\": \"redirect-test.local\", \"hostname_enabled\": false, \"api_enabled\": false}"
+check "PUT /api/settings (hostname off)" "$(request --request PUT --header 'Content-Type: application/json' \
+  --data "$settings" "$BASE/api/settings")" 200
+check "no mDNS answer once turned off" "$(resolve)" nothing
+stop "$RUN_ID-g"
 
 # --- Third run: a user that cannot write to /data must get a clear error, not a crash loop ----------------------
 docker run --detach --name "$RUN_ID-c" --platform "$PLATFORM" --read-only --user 12345:12345 \

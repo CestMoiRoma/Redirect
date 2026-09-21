@@ -1,6 +1,6 @@
 # Redirect
 
-Redirect gives out fixed links and sends each one to a target you can change at any time. Say an Excel file on the local network changes URL from time to time: people receive `http://192.168.1.20/redirect/compta/budget-2026` once, and when the file moves you change the target in Redirect instead of sending a new link. A link answers with an HTTP 302 to its current target, and Redirect never serves or proxies the file itself.
+Redirect gives out fixed links and sends each one to a target you can change at any time. Say an Excel file on the local network changes URL from time to time: people receive `http://redirect.lan/redirect/compta/budget-2026` once, and when the file moves you change the target in Redirect instead of sending a new link. A link answers with an HTTP 302 to its current target, and Redirect never serves or proxies the file itself.
 
 ![The Redirect interface: the list of redirects and the form to create one](test/screenshot/redirect/02-list.png)
 
@@ -39,16 +39,23 @@ volumes:
 
 Set `ipv4_address` to a free address outside the range your router's DHCP hands out, `parent` to the host's network interface, and `subnet` and `gateway` to those of your LAN. Put a password of 8 characters or more in `ADMIN_PASSWORD`, then run `docker compose up -d`. With macvlan, the Docker host itself cannot reach the container's address: use Redirect from another machine of the network.
 
-The interface is then at `http://192.168.1.20/` and the links at `http://192.168.1.20/redirect/<path>`. The redirects live in a SQLite file, `redirect.db`, in the `redirect-data` volume, so they survive restarts and upgrades. Each release is also tagged with its version, such as `0.1.0`: pin it to upgrade when you choose.
+The interface is then at `http://192.168.1.20/`, and the links read `http://redirect.lan/redirect/<path>` (see below for that name). The redirects live in a SQLite file, `redirect.db`, in the `redirect-data` volume, so they survive restarts and upgrades. Each release is also tagged with its version, such as `0.1.0`: pin it to upgrade when you choose.
 
-| Variable              | Default         | What it does                                                                                                     |
-| --------------------- | --------------- | ---------------------------------------------------------------------------------------------------------------- |
-| `ADMIN_PASSWORD`      | unset           | Password of the interface, 8 characters or more. Unset, the interface and the API are open to anyone.            |
-| `PORT`                | `80`            | Port the server listens on. Change it only when port 80 of the container's address is taken.                     |
-| `DATA_DIR`            | `/data`         | Folder of `redirect.db`. The server runs as uid 10001, which must be able to write there.                        |
-| `PUBLIC_BASE_URL`     | unset           | Base of the links the interface shows, e.g. `https://go.example.org`. Unset, links follow the browser's address. |
-| `LOG_LEVEL`           | `INFO`          | `DEBUG`, `INFO`, `WARNING`, `ERROR` or `CRITICAL`.                                                               |
-| `FORWARDED_ALLOW_IPS` | `127.0.0.1,::1` | Addresses whose `X-Forwarded-Proto` and `X-Forwarded-For` headers are trusted.                                   |
+| Variable              | Default         | What it does                                                                                                   |
+| --------------------- | --------------- | -------------------------------------------------------------------------------------------------------------- |
+| `ADMIN_PASSWORD`      | unset           | Password of the interface, 8 characters or more. Unset, the interface and the API are open to anyone.          |
+| `API_ENABLED`         | unset           | `true` or `false` forces the scripts' API on or off. Unset, the switch in the interface decides, off at first. |
+| `PORT`                | `80`            | Port the server listens on. Change it only when port 80 of the container's address is taken.                   |
+| `DATA_DIR`            | `/data`         | Folder of `redirect.db`. The server runs as uid 10001, which must be able to write there.                      |
+| `PUBLIC_BASE_URL`     | unset           | Base of the links, e.g. `https://go.example.org`, over the hostname of the interface. For a reverse proxy.     |
+| `LOG_LEVEL`           | `INFO`          | `DEBUG`, `INFO`, `WARNING`, `ERROR` or `CRITICAL`.                                                             |
+| `FORWARDED_ALLOW_IPS` | `127.0.0.1,::1` | Addresses whose `X-Forwarded-Proto` and `X-Forwarded-For` headers are trusted.                                 |
+
+### Name the links
+
+The links use a hostname, `redirect.lan` by default: `http://redirect.lan/redirect/<path>`. Point that name at Redirect's address in your router's DNS or your local DNS server. The Links card of the interface changes it, or turns it off: the links then use the address your browser used to reach Redirect.
+
+A name ending in `.local`, such as `redirect.local`, needs no DNS: Redirect announces it on the network with mDNS, and the Links card says so. Most computers and phones resolve such names. The announcement reaches the LAN because the container has its own address on it; behind published ports it does not.
 
 ### Behind a reverse proxy
 
@@ -68,7 +75,7 @@ Open the interface, fill in the path, a name and the target URL under New redire
 
 ## Change redirects from a script
 
-Scripts use an API key rather than the password. Generate it in the API key card of the interface, under the form: it is shown once, so copy it then. Only its hash is stored, in the volume, so it survives restarts. Regenerate it when it leaks: the old key stops working at once. The key needs `ADMIN_PASSWORD`, since without a password the API is open anyway.
+Scripts use an API key rather than the password. The API is off at first: turn it on in the API card of the interface, or force it with `API_ENABLED`. Then generate the key in the same card: it is shown once, so copy it then. Only its hash is stored, in the volume, so it survives restarts. Regenerate it when it leaks: the old key stops working at once. The key needs `ADMIN_PASSWORD`, since without a password the API is open anyway.
 
 Send it as a bearer token to `/api/redirects`:
 
@@ -93,7 +100,7 @@ curl -X PUT -H "Authorization: Bearer $KEY" -H 'Content-Type: application/json' 
 curl -X DELETE -H "Authorization: Bearer $KEY" $BASE/api/redirects/1
 ```
 
-Errors come back as JSON with a `detail` message and, for invalid fields, one message per field in `errors`: 401 for a missing or wrong key, 404 for an unknown id, 409 for a path already taken, 422 for invalid values. The key only manages redirects: generating a new key takes a login in the interface.
+Errors come back as JSON with a `detail` message and, for invalid fields, one message per field in `errors`: 401 for a missing or wrong key, 403 while the API is off, 404 for an unknown id, 409 for a path already taken, 422 for invalid values. The key only manages redirects: generating a new key takes a login in the interface.
 
 ## Work on the code
 

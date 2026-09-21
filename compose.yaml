@@ -1,6 +1,7 @@
 # Redirect in one command: docker compose up -d
-# The container gets its own address on the LAN (macvlan below), so the links need no port:
-# the interface is at http://192.168.1.20/ and the links at http://192.168.1.20/redirect/<path>.
+# The container gets its own address on the LAN (macvlan below), so the links need no port: the interface is
+# at http://192.168.1.20/, and the links read http://redirect.lan/redirect/<path>. Point redirect.lan at that
+# address in your router's DNS, or change or turn off the hostname in the interface (Links card).
 # Redirections live in the named volume below: they survive restarts, upgrades and `docker compose down`.
 services:
   redirect:
@@ -21,8 +22,9 @@ services:
       ADMIN_PASSWORD: ''
       # Port the server listens on: 80 unless you need another one
       # PORT: 80
-      # Base of the public links the interface shows and copies. Unset, links follow the address the
-      # browser used to reach Redirect. Set it for a DNS name or a reverse proxy serving HTTPS.
+      # Scripts' API: off until turned on in the interface (API card). true or false here forces it.
+      # API_ENABLED: 'true'
+      # Base of the public links, over the hostname of the interface: set it for a reverse proxy serving HTTPS.
       # PUBLIC_BASE_URL: https://go.example.org
       # Addresses whose X-Forwarded-* headers are trusted (scheme and client IP). The default trusts the
       # loopback only. Set it to your reverse proxy's address, or set PUBLIC_BASE_URL above, which always wins.

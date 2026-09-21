@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # App image test (just image-test, CI job "image:app"): build the image of the root Dockerfile, run it the way
 # a user would, and check what the image adds on top of the code: packaging, user, volume, health check,
-# served files, proxy settings, persistence, clean stop. Uses the host's Docker, never the CI image.
+# served files, proxy settings, persistence (redirects, admin session, API key), clean stop. Uses the host's
+# Docker, never the CI image.
 #
 #   image-test.sh [PLATFORM [IMAGE]]
 #     PLATFORM  linux/amd64 (default, the CI runner's) or linux/arm64, run emulated when it is not the host's
@@ -24,14 +25,14 @@ START_TIMEOUT=120
 cleanup() {
   local status=$?
   if [ "$status" -ne 0 ]; then
-    for name in "$RUN_ID-a" "$RUN_ID-b" "$RUN_ID-c"; do
+    for name in "$RUN_ID-a" "$RUN_ID-b" "$RUN_ID-c" "$RUN_ID-d" "$RUN_ID-e"; do
       if docker container inspect "$name" >/dev/null 2>&1; then
         echo "--- logs of $name"
         docker logs --tail 50 "$name" 2>&1 || true
       fi
     done
   fi
-  docker rm --force "$RUN_ID-a" "$RUN_ID-b" "$RUN_ID-c" >/dev/null 2>&1 || true
+  docker rm --force "$RUN_ID-a" "$RUN_ID-b" "$RUN_ID-c" "$RUN_ID-d" "$RUN_ID-e" >/dev/null 2>&1 || true
   docker volume rm --force "$VOLUME" >/dev/null 2>&1 || true
   rm -rf "$WORK"
   exit "$status"
@@ -164,6 +165,7 @@ contains "forwarded headers ignored by default" "$(cat "$WORK/body")" "\"base_ur
 
 logs="$(docker logs "$RUN_ID-a" 2>&1)"
 contains "one log line per redirect" "$logs" "redirect slug=$SLUG status=302"
+contains "no ADMIN_PASSWORD: the log warns" "$logs" "ADMIN_PASSWORD is not set"
 case "$logs" in *Traceback*) fail "a traceback in the logs" ;; esac
 stop "$RUN_ID-a"
 
@@ -174,6 +176,30 @@ check "Location after a restart" "$(header location)" "$TARGET"
 request --header 'X-Forwarded-Proto: https' "$BASE/api/redirects" >/dev/null
 contains "FORWARDED_ALLOW_IPS honoured" "$(cat "$WORK/body")" "\"base_url\":\"https://${BASE#http://}\""
 stop "$RUN_ID-b"
+
+# --- With ADMIN_PASSWORD: log in, generate an API key; both must survive a restart on the same volume ---------
+PASSWORD="image test password"
+login_body="{\"password\": \"$PASSWORD\"}"
+start "$RUN_ID-d" --env "ADMIN_PASSWORD=$PASSWORD"
+check "GET /api/redirects without a login" "$(request "$BASE/api/redirects")" 401
+check "public link without a login" "$(request "$BASE/redirect/$SLUG")" 302
+check "POST /api/login" "$(request --cookie-jar "$WORK/cookies" --request POST \
+  --header 'Content-Type: application/json' --data "$login_body" "$BASE/api/login")" 204
+check "GET /api/redirects with the session" "$(request --cookie "$WORK/cookies" "$BASE/api/redirects")" 200
+check "POST /api/key" "$(request --cookie "$WORK/cookies" --request POST "$BASE/api/key")" 201
+key="$(sed -E 's/.*"key":"([^"]+)".*/\1/' "$WORK/body")"
+contains "the key is shown once" "$key" "rdk_"
+check "GET /api/redirects with the key" "$(request --header "Authorization: Bearer $key" "$BASE/api/redirects")" 200
+check "GET /api/redirects with a wrong key" \
+  "$(request --header "Authorization: Bearer rdk_wrong" "$BASE/api/redirects")" 401
+stop "$RUN_ID-d"
+
+start "$RUN_ID-e" --env "ADMIN_PASSWORD=$PASSWORD"
+check "the API key after a restart" \
+  "$(request --header "Authorization: Bearer $key" "$BASE/api/redirects")" 200
+check "the session after a restart" "$(request --cookie "$WORK/cookies" "$BASE/api/redirects")" 200
+case "$(docker logs "$RUN_ID-e" 2>&1)" in *"$key"*) fail "the API key appears in the logs" ;; esac
+stop "$RUN_ID-e"
 
 # --- Third run: a user that cannot write to /data must get a clear error, not a crash loop ----------------------
 docker run --detach --name "$RUN_ID-c" --platform "$PLATFORM" --read-only --user 12345:12345 \

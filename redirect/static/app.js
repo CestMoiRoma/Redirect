@@ -3,6 +3,7 @@
 'use strict'
 ;(() => {
   const COPIED_MS = 2000
+  const LOG_PAGE = 25
   const FIELDS = ['slug', 'name', 'target']
 
   const state = {
@@ -16,6 +17,8 @@
     loginRequired: false,
     keyExists: false,
     settings: null, // as last saved on the server
+    logsBefore: null, // the `before` of the next page of the log
+    appShown: false,
   }
 
   const $ = (selector, root = document) => root.querySelector(selector)
@@ -34,6 +37,9 @@
     })
     root.querySelectorAll('[data-i18n-placeholder]').forEach((el) => {
       el.placeholder = t(el.dataset.i18nPlaceholder)
+    })
+    root.querySelectorAll('[data-i18n-aria-label]').forEach((el) => {
+      el.setAttribute('aria-label', t(el.dataset.i18nAriaLabel))
     })
   }
 
@@ -377,7 +383,10 @@
 
   function showLogin() {
     document.querySelectorAll('dialog[open]').forEach((dialog) => dialog.close())
+    state.appShown = false
     $('#main').hidden = true
+    $('#logs-view').hidden = true
+    $('#tabs').hidden = true
     $('#logout').hidden = true
     $('#open-warning').hidden = true
     $('#load-error').hidden = true
@@ -585,10 +594,110 @@
     })
   }
 
+  // --- Sections: redirects, log ------------------------------------------------------------------------
+
+  const VIEWS = { redirects: '#main', logs: '#logs-view' }
+
+  function currentView() {
+    return location.hash === '#/logs' ? 'logs' : 'redirects'
+  }
+
+  function showView() {
+    const view = currentView()
+    for (const [name, selector] of Object.entries(VIEWS)) $(selector).hidden = name !== view
+    document.querySelectorAll('#tabs a').forEach((link) => {
+      if (link.dataset.view === view) link.setAttribute('aria-current', 'page')
+      else link.removeAttribute('aria-current')
+    })
+    if (view === 'logs') loadLogs(true)
+  }
+
+  // Texts of the log, one function per value so each key is written out in full
+  const ACTION_TEXTS = {
+    visit: () => t('logs.action.visit'),
+    create: () => t('logs.action.create'),
+    update: () => t('logs.action.update'),
+    delete: () => t('logs.action.delete'),
+    read: () => t('logs.action.read'),
+  }
+  const SOURCE_TEXTS = {
+    link: () => t('logs.source.link'),
+    interface: () => t('logs.source.interface'),
+    api: () => t('logs.source.api'),
+  }
+
+  function cell(text, className) {
+    const td = document.createElement('td')
+    td.textContent = text ?? ''
+    if (className) td.className = className
+    return td
+  }
+
+  function logRow(event) {
+    const row = document.createElement('tr')
+    const redirect = cell(event.name)
+    if (event.redirect_id) {
+      const id = document.createElement('span')
+      id.className = 'redirect-id'
+      id.textContent = event.redirect_id
+      redirect.append(id)
+    }
+    const browser = cell(event.user_agent, 'browser')
+    if (event.user_agent) browser.title = event.user_agent
+    row.append(
+      cell(event.at.replace('T', ' ').replace('Z', ''), 'mono nowrap'),
+      cell(ACTION_TEXTS[event.action] ? ACTION_TEXTS[event.action]() : event.action),
+      cell(SOURCE_TEXTS[event.source] ? SOURCE_TEXTS[event.source]() : event.source),
+      redirect,
+      cell(event.path, 'mono path'),
+      cell(event.status, event.status === 404 ? 'mono status-404' : 'mono'),
+      cell(event.client, 'mono nowrap'),
+      browser,
+    )
+    return row
+  }
+
+  async function loadLogs(reset) {
+    const rows = $('#logs-rows')
+    const more = $('#logs-more')
+    const logsError = $('#logs-error')
+    if (reset) {
+      rows.replaceChildren()
+      state.logsBefore = null
+    }
+    const params = new URLSearchParams({ limit: String(LOG_PAGE) })
+    if (state.logsBefore !== null) params.set('before', String(state.logsBefore))
+    if ($('#logs-filter').value) params.set('kind', $('#logs-filter').value)
+    logsError.hidden = true
+    try {
+      const page = await api('GET', `/api/logs?${params}`)
+      rows.append(...page.events.map(logRow))
+      state.logsBefore = page.next
+      more.hidden = page.next === null
+      $('#logs-empty').hidden = rows.children.length > 0
+      $('#logs-table').hidden = rows.children.length === 0
+    } catch (error) {
+      if (!(error instanceof ApiError)) throw error
+      if (error.status === 401) return
+      logsError.textContent = error.message
+      logsError.hidden = false
+    }
+  }
+
+  function setupLogs() {
+    window.addEventListener('hashchange', () => {
+      if (state.appShown) showView()
+    })
+    $('#logs-filter').addEventListener('change', () => loadLogs(true))
+    $('#logs-more').addEventListener('click', () => loadLogs(false))
+  }
+
   // --- Start ------------------------------------------------------------------------------------------
 
   function showLoadError() {
     $('#main').hidden = true
+    $('#logs-view').hidden = true
+    $('#tabs').hidden = true
     const loadError = $('#load-error')
     loadError.textContent = t('status.load_failed')
     loadError.hidden = false
@@ -603,7 +712,9 @@
       await reload()
       renderSettings(await api('GET', '/api/settings'))
       if (state.loginRequired && state.settings.api_enabled) renderKey(await api('GET', '/api/key'))
-      $('#main').hidden = false
+      state.appShown = true
+      $('#tabs').hidden = false
+      showView()
     } catch (error) {
       if (error instanceof ApiError && error.status === 401) return // the login screen is shown
       showLoadError()
@@ -657,6 +768,7 @@
     setupLogin()
     setupKey()
     setupSettings()
+    setupLogs()
     await start()
   }
 

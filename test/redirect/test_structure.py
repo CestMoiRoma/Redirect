@@ -137,9 +137,10 @@ class _TextCollector(HTMLParser):
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         for name, value in attrs:
-            if name in ("data-i18n", "data-i18n-placeholder") and value:
+            if name in ("data-i18n", "data-i18n-placeholder", "data-i18n-aria-label") and value:
                 self.keys.add(value)
-            elif name in self.TEXT_ATTRIBUTES and value:
+            elif name in self.TEXT_ATTRIBUTES and value and (tag, name) != ("option", "value"):
+                # An option's value is what the page reads, never shown: its label comes from data-i18n
                 self.attributes.append((tag, name, value))
 
     def handle_data(self, data: str) -> None:

@@ -599,6 +599,133 @@ input[aria-invalid='true'] {
   width: 100%;
 }
 
+/* --- Sections and log ------------------------------------------------------------------------------ */
+
+.tabs {
+  display: flex;
+  gap: 4px;
+  margin-top: -8px;
+  margin-bottom: 20px;
+  border-bottom: 1px solid var(--border);
+}
+
+.tabs a {
+  margin-bottom: -1px;
+  padding: 8px 14px;
+  border-bottom: 3px solid transparent;
+  color: var(--muted);
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.tabs a:hover {
+  color: var(--text);
+}
+
+.tabs a[aria-current='page'] {
+  border-bottom-color: var(--accent);
+  color: var(--accent);
+}
+
+.logs-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.logs-head h2:focus {
+  outline: none;
+}
+
+.logs-filter {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+select {
+  min-height: 38px;
+  padding: 6px 10px;
+  border: 1px solid var(--field-border);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text);
+  font: 14px var(--font);
+}
+
+.logs .hint {
+  margin-top: 6px;
+}
+
+.table-scroll {
+  margin-top: 16px;
+  overflow-x: auto;
+}
+
+.logs-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.logs-table th {
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border-strong);
+  color: var(--muted);
+  font-weight: 600;
+  text-align: left;
+  white-space: nowrap;
+}
+
+.logs-table td {
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border);
+  vertical-align: top;
+}
+
+.logs-table .mono {
+  font-family: var(--mono);
+}
+
+.logs-table .nowrap {
+  white-space: nowrap;
+}
+
+.logs-table .path {
+  overflow-wrap: anywhere;
+}
+
+.logs-table .browser {
+  max-width: 240px;
+  overflow: hidden;
+  color: var(--muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.logs-table .redirect-id {
+  display: block;
+  color: var(--muted);
+  font: 12px var(--mono);
+}
+
+.logs-table .status-404 {
+  color: var(--danger);
+  font-weight: 600;
+}
+
+#logs-empty {
+  margin-top: 16px;
+}
+
+.logs-more {
+  display: flex;
+  justify-content: center;
+  margin-top: 14px;
+}
+
 /* --- Login ------------------------------------------------------------------------------------------ */
 
 .login {

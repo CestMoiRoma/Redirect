@@ -78,6 +78,8 @@ SHOTS = (
     "29-hostname-error",
     "30-hostname-mdns",
     "31-environment",
+    "32-logs",
+    "33-logs-changes",
 )
 
 # Web fonts each kind of page must have loaded (and so rendered with) when captured
@@ -1058,6 +1060,82 @@ def environment_walk(run: Scenario, data_dir: Path) -> None:
         page.context.close()
 
 
+def logs_walk(run: Scenario, data_dir: Path) -> None:
+    """The Logs section: empty, then visits and a change, paged by 25, filtered."""
+    shutil.copyfile(FIXTURE_DB, data_dir / "redirect.db")
+    with app_server(data_dir) as base:
+        page = run.open(base)
+        page.goto(base + "/")
+        log_in(page)
+        tabs = page.get_by_role("navigation", name="Sections")
+        expect(tabs.get_by_role("link")).to_have_text(["Redirects", "Logs"])
+        expect(tabs.get_by_role("link", name="Redirects")).to_have_attribute("aria-current", "page")
+        view = page.locator("#logs-view")
+
+        # --- Nothing yet
+        tabs.get_by_role("link", name="Logs").click()
+        expect(page).to_have_url(base + "/#/logs")
+        expect(view).to_be_visible()
+        expect(page.locator("#main")).to_be_hidden()
+        expect(tabs.get_by_role("link", name="Logs")).to_have_attribute("aria-current", "page")
+        expect(view.get_by_role("heading", level=2)).to_have_text("Logs")
+        expect(view.locator("#logs-empty")).to_have_text("Nothing logged yet.")
+        expect(view.locator("#logs-table")).to_be_hidden()
+        expect(view.locator("#logs-more")).to_be_hidden()
+
+        # --- Visits from outside (24 of them, and one of a link that does not exist), then a change here
+        wiki = FIXTURE_IDS["wiki"]
+        for number in range(24):
+            url = base + ("/redirect/wiki" if number % 2 else f"/links/{wiki}")
+            assert page.request.get(url, max_redirects=0).status == 302
+        assert page.request.get(base + "/redirect/compta/budget-2025", max_redirects=0).status == 404
+        tabs.get_by_role("link", name="Redirects").click()
+        expect(page.locator("#main")).to_be_visible()
+        page.locator("#list .item").nth(2).get_by_role("button", name="Edit: Team wiki").click()
+        page.locator("#edit-dialog").get_by_label("Target URL").fill("http://wiki.intranet.local/home")
+        page.locator("#edit-dialog").get_by_role("button", name="Save changes").click()
+        expect(page.locator("#status")).to_have_text("Redirect “Team wiki” saved.")
+
+        # --- The log, newest first, 25 at a time
+        tabs.get_by_role("link", name="Logs").click()
+        rows = view.locator("#logs-rows tr")
+        expect(rows).to_have_count(25)
+        expect(view.locator("thead th")).to_have_text(
+            ["Date (UTC)", "Event", "By", "Redirect", "Path", "Code", "Client", "Browser"]
+        )
+        expect(rows.nth(0).locator("td")).to_have_text(
+            [
+                "2026-01-15 09:30:00",
+                "Changed",
+                "Interface",
+                f"Team wiki{wiki}",
+                "wiki",
+                "",
+                "127.0.0.1",
+                re.compile(".+"),
+            ]
+        )
+        expect(rows.nth(1).locator("td").nth(4)).to_have_text("/redirect/compta/budget-2025")
+        expect(rows.nth(1).locator("td").nth(5)).to_have_text("404")
+        expect(rows.nth(1).locator("td").nth(5)).to_have_class("mono status-404")
+        expect(rows.nth(2).locator("td").nth(1)).to_have_text("Visit")
+        expect(rows.nth(2).locator("td").nth(2)).to_have_text("Link")
+        more = view.get_by_role("button", name="Load more")
+        expect(more).to_be_visible()
+        expect(view.locator("#logs-empty")).to_be_hidden()
+        run.shot(page, "32-logs")
+        more.click()
+        expect(rows).to_have_count(26)
+        expect(more).to_be_hidden()
+
+        # --- Only the changes
+        view.get_by_label("Show").select_option("changes")
+        expect(rows).to_have_count(1)
+        expect(rows.nth(0).locator("td").nth(1)).to_have_text("Changed")
+        run.shot(page, "33-logs-changes")
+        page.context.close()
+
+
 def open_mode(run: Scenario, data_dir: Path) -> None:
     """No admin password: no login, and a red warning that stays on screen."""
     shutil.copyfile(FIXTURE_DB, data_dir / "redirect.db")
@@ -1094,7 +1172,7 @@ def main(out_dir: Path) -> int:
                 with tempfile.TemporaryDirectory() as empty, tempfile.TemporaryDirectory() as seeded:
                     empty_list(run, Path(empty))
                     main_walk(run, Path(seeded))
-                for walk in (auth_walk, settings_walk, environment_walk, open_mode):
+                for walk in (auth_walk, settings_walk, environment_walk, logs_walk, open_mode):
                     with tempfile.TemporaryDirectory() as data:
                         walk(run, Path(data))
             browser.close()

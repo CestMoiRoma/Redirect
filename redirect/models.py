@@ -261,3 +261,28 @@ class SettingsOut(BaseModel):
     api_forced: bool
     # True while the hostname, ending in .local, is announced on the LAN (mDNS)
     mdns: bool
+
+
+class EventOut(BaseModel):
+    """One line of the log."""
+
+    id: int
+    at: str
+    # visit (a link followed), create, update, delete (a redirect changed), read (the API read by a script)
+    action: str
+    # link (a visit), interface, or api (a script with the API key)
+    source: str
+    # The redirect as it was: its id, name and path (the path asked for, for a visit)
+    redirect_id: str | None
+    name: str | None
+    path: str | None
+    status: int | None
+    client: str | None
+    user_agent: str | None
+
+
+class LogsOut(BaseModel):
+    """Body of GET /api/logs: the newest events first; `next` is the `before` of the following page."""
+
+    events: list[EventOut]
+    next: int | None

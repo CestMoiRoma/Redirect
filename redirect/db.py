@@ -37,6 +37,23 @@ MIGRATIONS: tuple[str, ...] = (
     UPDATE redirects SET code = lower(hex(randomblob(4)));
     CREATE UNIQUE INDEX redirects_code ON redirects (code)
     """,
+    # The log: visits of the links, changes of the redirects, reads through the API. The redirect's id, name and
+    # path are copied: the log still tells what happened after the redirect changed or went away.
+    """
+    CREATE TABLE events (
+        id         INTEGER PRIMARY KEY AUTOINCREMENT,
+        at         TEXT    NOT NULL,
+        action     TEXT    NOT NULL,
+        source     TEXT    NOT NULL,
+        code       TEXT,
+        name       TEXT,
+        path       TEXT,
+        status     INTEGER,
+        client     TEXT,
+        user_agent TEXT
+    );
+    CREATE INDEX events_at ON events (at)
+    """,
 )
 
 BUSY_TIMEOUT_SECONDS = 5.0
@@ -54,6 +71,23 @@ class DatabaseError(RuntimeError):
 
 class SlugTakenError(Exception):
     """Another redirect already uses this slug."""
+
+
+@dataclass(frozen=True)
+class Event:
+    id: int
+    at: str
+    action: str
+    source: str
+    code: str | None
+    name: str | None
+    path: str | None
+    status: int | None
+    client: str | None
+    user_agent: str | None
+
+
+_EVENT_COLUMNS = "id, at, action, source, code, name, path, status, client, user_agent"
 
 
 @dataclass(frozen=True)
@@ -221,3 +255,54 @@ class Database:
                 "INSERT INTO settings (name, value) VALUES (?, ?) ON CONFLICT (name) DO UPDATE SET value = excluded.value",
                 values.items(),
             )
+
+    # --- Log ----------------------------------------------------------------------------------------------
+
+    def log_event(
+        self,
+        action: str,
+        source: str,
+        redirect: Redirect | None = None,
+        path: str | None = None,
+        status: int | None = None,
+        client: str | None = None,
+        user_agent: str | None = None,
+    ) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                f"INSERT INTO events ({_EVENT_COLUMNS.removeprefix('id, ')}) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    timestamp(self.clock()),
+                    action,
+                    source,
+                    redirect.code if redirect else None,
+                    redirect.name if redirect else None,
+                    path if path is not None else (redirect.slug if redirect else None),
+                    status,
+                    client,
+                    user_agent,
+                ),
+            )
+
+    def events(self, limit: int, before: int | None = None, actions: tuple[str, ...] = ()) -> list[Event]:
+        """The newest events first; `before` pages back (events with a smaller id), `actions` filters."""
+        where: list[str] = []
+        values: list[int | str] = []
+        if before is not None:
+            where.append("id < ?")
+            values.append(before)
+        if actions:
+            where.append(f"action IN ({', '.join('?' * len(actions))})")
+            values.extend(actions)
+        clause = f"WHERE {' AND '.join(where)}" if where else ""
+        with self._connect() as conn:
+            rows = conn.execute(
+                f"SELECT {_EVENT_COLUMNS} FROM events {clause} ORDER BY id DESC LIMIT ?", (*values, limit)
+            ).fetchall()
+        return [Event(**dict(row)) for row in rows]
+
+    def purge_events(self, older_than: datetime) -> int:
+        """Removes the events older than `older_than`; returns how many."""
+        with self._connect() as conn:
+            cursor = conn.execute("DELETE FROM events WHERE at < ?", (timestamp(older_than),))
+        return cursor.rowcount

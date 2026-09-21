@@ -11,6 +11,7 @@ DB_FILENAME = "redirect.db"
 # The levels both logging and uvicorn know
 LOG_LEVELS = ("DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL")
 ADMIN_PASSWORD_MIN_LENGTH = 8
+DEFAULT_LOG_RETENTION_DAYS = 90
 _TRUE = ("true", "1", "yes", "on")
 _FALSE = ("false", "0", "no", "off")
 
@@ -25,6 +26,8 @@ class Settings:
     admin_password: str | None = field(default=None, repr=False)
     # None: the interface switches the scripts' API on and off. True or False: forced by API_ENABLED.
     api_enabled: bool | None = None
+    # Events older than this are purged from the log
+    log_retention_days: int = DEFAULT_LOG_RETENTION_DAYS
 
     @property
     def db_path(self) -> Path:
@@ -50,6 +53,9 @@ class Settings:
             password = ""
         elif len(password) < ADMIN_PASSWORD_MIN_LENGTH:
             raise ValueError(f"ADMIN_PASSWORD must be at least {ADMIN_PASSWORD_MIN_LENGTH} characters long")
+        retention_raw = env.get("LOG_RETENTION_DAYS", "").strip() or str(DEFAULT_LOG_RETENTION_DAYS)
+        if not retention_raw.isdigit() or int(retention_raw) < 1:
+            raise ValueError(f"LOG_RETENTION_DAYS must be a whole number of days, 1 or more, got {retention_raw!r}")
         api_raw = env.get("API_ENABLED", "").strip().lower()
         if api_raw and api_raw not in _TRUE + _FALSE:
             raise ValueError(f"API_ENABLED must be true or false, got {env['API_ENABLED']!r}")
@@ -60,4 +66,5 @@ class Settings:
             log_level=level_raw.upper(),
             admin_password=password or None,
             api_enabled=(api_raw in _TRUE) if api_raw else None,
+            log_retention_days=int(retention_raw),
         )

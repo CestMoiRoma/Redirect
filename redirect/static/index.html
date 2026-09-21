@@ -42,6 +42,53 @@
       </section>
     </main>
 
+    <div class="wrap" id="tabs" hidden>
+      <nav class="tabs" data-i18n-aria-label="nav.label">
+        <a href="#/" data-view="redirects" data-i18n="nav.redirects"></a>
+        <a href="#/logs" data-view="logs" data-i18n="nav.logs"></a>
+      </nav>
+    </div>
+
+    <main class="wrap" id="logs-view" hidden>
+      <section class="card logs" aria-labelledby="logs-title">
+        <div class="logs-head">
+          <h2 id="logs-title" tabindex="-1" data-i18n="logs.title"></h2>
+          <div class="logs-filter">
+            <label for="logs-filter" data-i18n="logs.filter.label"></label>
+            <select id="logs-filter">
+              <option value="" data-i18n="logs.filter.all"></option>
+              <option value="visits" data-i18n="logs.filter.visits"></option>
+              <option value="changes" data-i18n="logs.filter.changes"></option>
+              <option value="reads" data-i18n="logs.filter.reads"></option>
+            </select>
+          </div>
+        </div>
+        <p class="hint" data-i18n="logs.help"></p>
+        <div class="table-scroll">
+          <table class="logs-table" id="logs-table">
+            <thead>
+              <tr>
+                <th scope="col" data-i18n="logs.col.at"></th>
+                <th scope="col" data-i18n="logs.col.action"></th>
+                <th scope="col" data-i18n="logs.col.source"></th>
+                <th scope="col" data-i18n="logs.col.redirect"></th>
+                <th scope="col" data-i18n="logs.col.path"></th>
+                <th scope="col" data-i18n="logs.col.status"></th>
+                <th scope="col" data-i18n="logs.col.client"></th>
+                <th scope="col" data-i18n="logs.col.browser"></th>
+              </tr>
+            </thead>
+            <tbody id="logs-rows"></tbody>
+          </table>
+        </div>
+        <p class="empty" id="logs-empty" data-i18n="logs.empty" hidden></p>
+        <p class="form-error" id="logs-error" role="alert" hidden></p>
+        <div class="logs-more">
+          <button type="button" class="button" id="logs-more" data-i18n="logs.more" hidden></button>
+        </div>
+      </section>
+    </main>
+
     <main class="wrap layout" id="main" hidden>
       <section class="list-section" aria-labelledby="list-title">
         <div class="list-head">

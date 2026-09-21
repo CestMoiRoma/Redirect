@@ -2,15 +2,17 @@
 
 import asyncio
 import html
+import time
 import logging
 import mimetypes
 import re
 import sqlite3
 from collections.abc import AsyncIterator, Awaitable, Callable
+from datetime import timedelta
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI, Request, Response
+from fastapi import FastAPI, Query, Request, Response
 from fastapi.exception_handlers import http_exception_handler
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
@@ -50,7 +52,9 @@ from .models import (
     ApiKeyOut,
     AuthOut,
     ErrorOut,
+    EventOut,
     LoginIn,
+    LogsOut,
     NewApiKeyOut,
     RedirectIn,
     RedirectList,
@@ -239,7 +243,13 @@ class BodySizeLimit:
 
 
 # What an API key may call: everything that reads or changes redirects
-KEY_API_PREFIXES = ("/api/redirects", "/api/list")
+KEY_API_PREFIXES = ("/api/redirects", "/api/list", "/api/logs")
+# Filters of GET /api/logs and the actions they keep
+LOG_FILTERS = {"visits": ("visit",), "changes": ("create", "update", "delete"), "reads": ("read",)}
+# The log is purged at startup, then at most this often
+PURGE_EVERY_SECONDS = 3600
+# Longest user agent kept in the log
+MAX_USER_AGENT = 300
 
 
 def _is_redirects_api(path: str) -> bool:
@@ -289,6 +299,42 @@ def create_app(
     throttle = LoginThrottle()
     mdns = announcer if announcer is not None else ZeroconfAnnouncer(settings.port)
 
+    last_purge = [0.0]
+
+    def purge_log() -> None:
+        last_purge[0] = time.monotonic()
+        removed = db.purge_events(clock() - timedelta(days=settings.log_retention_days))
+        if removed:
+            logger.info("log: %d events older than %d days purged", removed, settings.log_retention_days)
+
+    def source_of(request: Request) -> str:
+        """api when a script sent the API key (the middleware has checked it), interface otherwise."""
+        return "api" if bearer_token(request.headers.get("authorization", "")) else "interface"
+
+    def record(
+        action: str,
+        request: Request,
+        source: str | None = None,
+        redirect: Redirect | None = None,
+        path: str | None = None,
+        status: int | None = None,
+    ) -> None:
+        """Adds an event to the log. A failure is logged and never breaks the request."""
+        try:
+            db.log_event(
+                action,
+                source or source_of(request),
+                redirect,
+                path,
+                status,
+                request.client.host if request.client else None,
+                (request.headers.get("user-agent") or "")[:MAX_USER_AGENT] or None,
+            )
+            if time.monotonic() - last_purge[0] > PURGE_EVERY_SECONDS:
+                purge_log()
+        except sqlite3.Error as exc:
+            logger.warning("log: cannot record a %s event: %s", action, exc)
+
     def announced_name() -> str | None:
         return auth.hostname if auth.hostname_enabled else None
 
@@ -300,6 +346,7 @@ def create_app(
         auth.hostname = db.setting(HOSTNAME) or DEFAULT_HOSTNAME
         auth.hostname_enabled = db.setting(HOSTNAME_ENABLED) != "0"
         auth.api_enabled = db.setting(API_ENABLED) == "1"
+        purge_log()
         # In a thread: announcing probes the network for about a second
         auth.mdns = await asyncio.to_thread(mdns.announce, announced_name())
         if password is None:
@@ -401,9 +448,11 @@ def create_app(
         slug = path.removeprefix(REDIRECT_PREFIX)
         target = db.target_for(slug) if is_valid_slug(slug) else None
         if target is None:
+            record("visit", request, "link", path=path[:MAX_ECHOED_PATH], status=404)
             return not_found_page(path)
         # The target is logged nowhere: it may carry a token
         logger.info("redirect slug=%s status=302", slug)
+        record("visit", request, "link", path=path, status=302)
         # no-store: a changed target must take effect on the very next click
         return RedirectResponse(target, status_code=302, headers={"Cache-Control": "no-store"})
 
@@ -413,8 +462,10 @@ def create_app(
         code = path.removeprefix(LINKS_PREFIX)
         target = db.target_for_code(code) if is_valid_code(code) else None
         if target is None:
+            record("visit", request, "link", path=path[:MAX_ECHOED_PATH], status=404)
             return not_found_page(path)
         logger.info("link id=%s status=302", code)
+        record("visit", request, "link", path=path, status=302)
         return RedirectResponse(target, status_code=302, headers={"Cache-Control": "no-store"})
 
     # --- API -----------------------------------------------------------------------------------------------
@@ -534,6 +585,8 @@ def create_app(
     @app.get("/api/list")
     @app.get("/api/redirects")
     def list_redirects(request: Request) -> RedirectList:
+        if source_of(request) == "api":
+            record("read", request, path=_route_path(request))
         return RedirectList(base_url=base_url(request), redirects=[out(r, request) for r in db.list_all()])
 
     @app.post("/api/redirects", status_code=201, response_model=RedirectOut, responses={409: {"model": ErrorOut}})
@@ -543,6 +596,7 @@ def create_app(
         except SlugTakenError:
             return _error(409, t("errors.slug_taken"), {"slug": t("errors.slug_taken")})
         logger.info("created id=%s slug=%s", created.code, created.slug)
+        record("create", request, redirect=created)
         return out(created, request)
 
     @app.put("/api/redirects/{redirect_id}", response_model=RedirectOut, responses={404: {"model": ErrorOut}})
@@ -554,15 +608,47 @@ def create_app(
         if updated is None:
             return _error(404, t("errors.not_found"))
         logger.info("updated id=%s slug=%s", updated.code, updated.slug)
+        record("update", request, redirect=updated)
         return out(updated, request)
 
     @app.delete("/api/redirects/{redirect_id}", status_code=204, responses={404: {"model": ErrorOut}})
-    def delete_redirect(redirect_id: str) -> Response:
+    def delete_redirect(redirect_id: str, request: Request) -> Response:
         deleted = db.delete(redirect_id)
         if deleted is None:
             return _error(404, t("errors.not_found"))
         logger.info("deleted id=%s slug=%s", deleted.code, deleted.slug)
+        record("delete", request, redirect=deleted)
         return Response(status_code=204)
+
+    @app.get("/api/logs")
+    def get_logs(
+        request: Request,
+        limit: int = Query(100, ge=1, le=1000),
+        before: int | None = Query(None, ge=1),
+        kind: str | None = Query(None, pattern="^(visits|changes|reads)$"),
+    ) -> LogsOut:
+        if source_of(request) == "api":
+            record("read", request, path=_route_path(request))
+        found = db.events(limit + 1, before, LOG_FILTERS[kind] if kind else ())
+        page = found[:limit]
+        return LogsOut(
+            events=[
+                EventOut(
+                    id=event.id,
+                    at=event.at,
+                    action=event.action,
+                    source=event.source,
+                    redirect_id=event.code,
+                    name=event.name,
+                    path=event.path,
+                    status=event.status,
+                    client=event.client,
+                    user_agent=event.user_agent,
+                )
+                for event in page
+            ],
+            next=page[-1].id if len(found) > limit else None,
+        )
 
     # --- Front end -----------------------------------------------------------------------------------------
 

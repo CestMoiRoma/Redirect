@@ -1,5 +1,6 @@
 """Shared fixtures: the real app on a temporary SQLite database, with a clock the test controls."""
 
+import itertools
 import sqlite3
 from collections.abc import Callable, Iterator
 from pathlib import Path
@@ -22,6 +23,7 @@ def clock() -> FrozenClock:
 def make_client(tmp_path: Path, clock: FrozenClock) -> Iterator[Callable[..., TestClient]]:
     """Factory: a started TestClient (lifespan run, database migrated) on tmp_path, closed after the test."""
     clients: list[TestClient] = []
+    ids = (f"id{number:06d}" for number in itertools.count(1))
 
     def make(
         public_base_url: str | None = None,
@@ -39,7 +41,9 @@ def make_client(tmp_path: Path, clock: FrozenClock) -> Iterator[Callable[..., Te
             api_enabled=api_enabled,
         )
         announcer = FakeAnnouncer()
-        app = create_app(settings, clock, announcer=announcer, **({} if new_key is None else {"new_key": new_key}))
+        # Predictable ids, in creation order, shared by every app of the test (they use the same database)
+        extra = {} if new_key is None else {"new_key": new_key}
+        app = create_app(settings, clock, announcer=announcer, make_code=lambda: next(ids), **extra)
         app.state.announcer = announcer
         client = TestClient(app, **client_options)
         client.__enter__()

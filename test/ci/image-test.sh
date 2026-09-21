@@ -156,9 +156,12 @@ check "POST /api/redirects" "$(request --request POST --header 'Content-Type: ap
   --data "$body" "$BASE/api/redirects")" 201
 contains "public link on the default hostname" "$(cat "$WORK/body")" "\"public_url\":\"http://redirect.lan/redirect/$SLUG\""
 
+id="$(sed -E 's/.*"id":"([^"]+)".*/\1/' "$WORK/body")"
 check "GET /redirect/$SLUG" "$(request "$BASE/redirect/$SLUG")" 302
 check "Location" "$(header location)" "$TARGET"
 check "Cache-Control of the redirect" "$(header cache-control)" no-store
+check "GET /links/$id (the short link)" "$(request "$BASE/links/$id")" 302
+check "Location of the short link" "$(header location)" "$TARGET"
 
 check "GET /redirect/image-test/unknown" "$(request "$BASE/redirect/image-test/unknown")" 404
 contains "404 content type" "$(header content-type)" text/html

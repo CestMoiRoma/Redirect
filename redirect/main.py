@@ -41,10 +41,11 @@ from .auth import (
     session_is_valid,
 )
 from .config import Settings
-from .db import Clock, Database, Redirect, SlugTakenError, timestamp, utc_now
+from .db import Clock, CodeMaker, Database, Redirect, SlugTakenError, new_code, timestamp, utc_now
 from .mdns import Announcer, ZeroconfAnnouncer
 from .models import (
     DEFAULT_HOSTNAME,
+    LINKS_PREFIX,
     REDIRECT_PREFIX,
     ApiKeyOut,
     AuthOut,
@@ -56,8 +57,10 @@ from .models import (
     RedirectOut,
     SettingsIn,
     SettingsOut,
+    is_valid_code,
     is_valid_slug,
     public_url,
+    short_url,
     validate_target,
 )
 from .strings import t
@@ -164,16 +167,21 @@ def _route_path(request: Request) -> str:
 
 
 def _is_redirect_path(path: str) -> bool:
-    return path == "/redirect" or path.startswith(REDIRECT_PREFIX)
+    """The public links: /redirect/<slug> and /links/<id>."""
+    return path in ("/redirect", "/links") or path.startswith((REDIRECT_PREFIX, LINKS_PREFIX))
 
 
-def not_found_page(slug: str) -> HTMLResponse:
-    """The 404 page of a public link. The path is shown only when it is a valid slug: never arbitrary text."""
-    logger.info("redirect slug=%r status=404", slug[:MAX_ECHOED_PATH])
-    if is_valid_slug(slug):
-        text = t("notfound.text", path=REDIRECT_PREFIX + slug)
+def not_found_page(path: str) -> HTMLResponse:
+    """The 404 page of a public link. The path is shown only when it is a valid link: never arbitrary text."""
+    if path.startswith(LINKS_PREFIX):
+        code = path.removeprefix(LINKS_PREFIX)
+        logger.info("link id=%r status=404", code[:MAX_ECHOED_PATH])
+        valid = is_valid_code(code)
     else:
-        text = t("notfound.text_unknown")
+        slug = path.removeprefix(REDIRECT_PREFIX)
+        logger.info("redirect slug=%r status=404", slug[:MAX_ECHOED_PATH])
+        valid = path.startswith(REDIRECT_PREFIX) and is_valid_slug(slug)
+    text = t("notfound.text", path=path) if valid else t("notfound.text_unknown")
     return HTMLResponse(render_page(t("notfound.title"), text), status_code=404, headers={"Cache-Control": "no-store"})
 
 
@@ -184,7 +192,7 @@ async def _http_error(request: Request, exc: Exception) -> Response:
         return _error(413, t("errors.body_too_large"))
     path = _route_path(request)
     if exc.status_code == 404 and _is_redirect_path(path):
-        return not_found_page(path.removeprefix(REDIRECT_PREFIX))
+        return not_found_page(path)
     return await http_exception_handler(request, exc)
 
 
@@ -230,8 +238,12 @@ class BodySizeLimit:
         await self.app(scope, counting_receive, send)
 
 
+# What an API key may call: everything that reads or changes redirects
+KEY_API_PREFIXES = ("/api/redirects", "/api/list")
+
+
 def _is_redirects_api(path: str) -> bool:
-    return path == "/api/redirects" or path.startswith("/api/redirects/")
+    return any(path == prefix or path.startswith(prefix + "/") for prefix in KEY_API_PREFIXES)
 
 
 def _unauthorized(message: str) -> JSONResponse:
@@ -258,9 +270,10 @@ def create_app(
     clock: Clock = utc_now,
     new_key: Callable[[], str] = new_api_key_body,
     announcer: Announcer | None = None,
+    make_code: CodeMaker = new_code,
 ) -> FastAPI:
-    """The app. `clock`, `new_key` and `announcer` are injected so tests and screenshots can freeze time and
-    keys, and stay off the network."""
+    """The app. `clock`, `new_key`, `make_code` and `announcer` are injected so tests and screenshots can freeze
+    time, keys and ids, and stay off the network."""
     settings = settings or Settings.from_env()
     if settings.public_base_url is not None:
         try:
@@ -270,7 +283,7 @@ def create_app(
                 f"PUBLIC_BASE_URL must be an http:// or https:// URL, got {settings.public_base_url!r}"
             ) from None
     configure_logging(settings.log_level)
-    db = Database(settings.db_path, clock)
+    db = Database(settings.db_path, clock, make_code)
     password = settings.admin_password
     auth = _State()
     throttle = LoginThrottle()
@@ -361,25 +374,47 @@ def create_app(
         return str(request.base_url).rstrip("/")
 
     def out(redirect: Redirect, request: Request) -> RedirectOut:
-        return RedirectOut(public_url=public_url(base_url(request), redirect.slug), **vars(redirect))
+        base = base_url(request)
+        return RedirectOut(
+            id=redirect.code,
+            slug=redirect.slug,
+            name=redirect.name,
+            target=redirect.target,
+            public_url=public_url(base, redirect.slug),
+            short_url=short_url(base, redirect.code),
+            created_at=redirect.created_at,
+            updated_at=redirect.updated_at,
+        )
 
     # --- Redirects ---------------------------------------------------------------------------------------
 
+    @app.api_route("/links", methods=["GET", "HEAD"], include_in_schema=False)
     @app.api_route("/redirect", methods=["GET", "HEAD"], include_in_schema=False)
-    def redirect_root() -> Response:
-        return not_found_page("")
+    def redirect_root(request: Request) -> Response:
+        return not_found_page(_route_path(request))
 
     @app.api_route("/redirect/{slug:path}", methods=["GET", "HEAD"], include_in_schema=False)
     def follow(request: Request) -> Response:
         # Read the slug from the path itself: the route pattern ends with "$", which also matches before a final
         # newline, so its parameter would turn "ok\n" into "ok"
-        slug = _route_path(request).removeprefix(REDIRECT_PREFIX)
+        path = _route_path(request)
+        slug = path.removeprefix(REDIRECT_PREFIX)
         target = db.target_for(slug) if is_valid_slug(slug) else None
         if target is None:
-            return not_found_page(slug)
+            return not_found_page(path)
         # The target is logged nowhere: it may carry a token
         logger.info("redirect slug=%s status=302", slug)
         # no-store: a changed target must take effect on the very next click
+        return RedirectResponse(target, status_code=302, headers={"Cache-Control": "no-store"})
+
+    @app.api_route("/links/{code:path}", methods=["GET", "HEAD"], include_in_schema=False)
+    def follow_short(request: Request) -> Response:
+        path = _route_path(request)
+        code = path.removeprefix(LINKS_PREFIX)
+        target = db.target_for_code(code) if is_valid_code(code) else None
+        if target is None:
+            return not_found_page(path)
+        logger.info("link id=%s status=302", code)
         return RedirectResponse(target, status_code=302, headers={"Cache-Control": "no-store"})
 
     # --- API -----------------------------------------------------------------------------------------------
@@ -496,6 +531,7 @@ def create_app(
         )
         return settings_out()
 
+    @app.get("/api/list")
     @app.get("/api/redirects")
     def list_redirects(request: Request) -> RedirectList:
         return RedirectList(base_url=base_url(request), redirects=[out(r, request) for r in db.list_all()])
@@ -506,26 +542,26 @@ def create_app(
             created = db.create(body.slug, body.name, body.target)
         except SlugTakenError:
             return _error(409, t("errors.slug_taken"), {"slug": t("errors.slug_taken")})
-        logger.info("created id=%d slug=%s", created.id, created.slug)
+        logger.info("created id=%s slug=%s", created.code, created.slug)
         return out(created, request)
 
     @app.put("/api/redirects/{redirect_id}", response_model=RedirectOut, responses={404: {"model": ErrorOut}})
-    def update_redirect(redirect_id: int, body: RedirectIn, request: Request) -> Response | RedirectOut:
+    def update_redirect(redirect_id: str, body: RedirectIn, request: Request) -> Response | RedirectOut:
         try:
             updated = db.update(redirect_id, body.slug, body.name, body.target)
         except SlugTakenError:
             return _error(409, t("errors.slug_taken"), {"slug": t("errors.slug_taken")})
         if updated is None:
             return _error(404, t("errors.not_found"))
-        logger.info("updated id=%d slug=%s", updated.id, updated.slug)
+        logger.info("updated id=%s slug=%s", updated.code, updated.slug)
         return out(updated, request)
 
     @app.delete("/api/redirects/{redirect_id}", status_code=204, responses={404: {"model": ErrorOut}})
-    def delete_redirect(redirect_id: int) -> Response:
+    def delete_redirect(redirect_id: str) -> Response:
         deleted = db.delete(redirect_id)
         if deleted is None:
             return _error(404, t("errors.not_found"))
-        logger.info("deleted id=%d slug=%s", deleted.id, deleted.slug)
+        logger.info("deleted id=%s slug=%s", deleted.code, deleted.slug)
         return Response(status_code=204)
 
     # --- Front end -----------------------------------------------------------------------------------------

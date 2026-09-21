@@ -23,8 +23,9 @@ BODY = {"slug": "wiki", "name": "Wiki", "target": "http://wiki.example/"}
 REDIRECTS_API = [
     ("GET", "/api/redirects", None),
     ("POST", "/api/redirects", BODY),
-    ("PUT", "/api/redirects/1", BODY),
-    ("DELETE", "/api/redirects/1", None),
+    # id000001: the first redirect the test creates (conftest's ids)
+    ("PUT", "/api/redirects/id000001", BODY),
+    ("DELETE", "/api/redirects/id000001", None),
 ]
 
 

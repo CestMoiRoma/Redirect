@@ -12,6 +12,7 @@ SLUG_MAX_LENGTH = 255
 NAME_MAX_LENGTH = 100
 TARGET_MAX_LENGTH = 2048
 REDIRECT_PREFIX = "/redirect/"
+LINKS_PREFIX = "/links/"
 HOSTNAME_MAX_LENGTH = 253
 DEFAULT_HOSTNAME = "redirect.lan"
 
@@ -129,6 +130,18 @@ def public_url(base_url: str, slug: str) -> str:
     return base_url.rstrip("/") + REDIRECT_PREFIX + slug
 
 
+def short_url(base_url: str, code: str) -> str:
+    """The same redirect, reached by its short id: <base>/links/<id>."""
+    return base_url.rstrip("/") + LINKS_PREFIX + code
+
+
+_CODE = re.compile(r"[A-Za-z0-9]{1,32}")
+
+
+def is_valid_code(value: str) -> bool:
+    return _CODE.fullmatch(value) is not None
+
+
 class RedirectIn(BaseModel):
     """Body of POST /api/redirects and PUT /api/redirects/{id}."""
 
@@ -153,11 +166,13 @@ class RedirectIn(BaseModel):
 
 
 class RedirectOut(BaseModel):
-    id: int
+    # The short id: /links/<id>, and the redirect's name in the API (PUT and DELETE /api/redirects/<id>)
+    id: str
     slug: str
     name: str
     target: str
     public_url: str
+    short_url: str
     created_at: str
     updated_at: str
 

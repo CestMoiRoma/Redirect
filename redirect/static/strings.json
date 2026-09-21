@@ -60,6 +60,7 @@
   "list.filter.placeholder": "Filter by name, path or target",
   "list.filter.none": "No redirect matches “{query}”.",
   "list.target.label": "Target",
+  "list.short.label": "Short link",
   "list.copy": "Copy link",
   "list.copied": "Copied",
   "list.copy.failed": "Copy failed",

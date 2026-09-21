@@ -383,6 +383,20 @@ h2 {
   overflow-wrap: anywhere;
 }
 
+.item-short {
+  margin-top: 2px;
+  font: 13px/1.45 var(--mono);
+  overflow-wrap: anywhere;
+}
+
+.short-link {
+  color: var(--accent);
+}
+
+.item-short .target-label {
+  color: var(--muted);
+}
+
 .target-label {
   margin-right: 6px;
   font: 600 11px/1.45 var(--font);

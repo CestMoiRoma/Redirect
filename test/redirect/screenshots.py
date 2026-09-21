@@ -8,6 +8,7 @@ or missing element. Every capture goes through golden.py.
 
 import html
 import itertools
+import re
 import shutil
 import socket
 import sys
@@ -27,6 +28,7 @@ import golden  # noqa: E402
 import uvicorn  # noqa: E402
 from playwright.sync_api import Page, expect, sync_playwright  # noqa: E402
 
+from seed import FIXTURE_REDIRECTS  # noqa: E402
 from support import FakeAnnouncer  # noqa: E402
 
 from redirect.config import Settings  # noqa: E402
@@ -96,6 +98,9 @@ ADMIN_PASSWORD = "correct horse battery"
 KEY_BODIES = ("K1kE9rT3xQ7mW2vN8pL4sD6fH0jB5cY1uZ3aG7eR9tX", "M4nP8qS2wV6yB0dF3hJ7kL1oR5tU9xA2cE6gI0mQ4sW")
 FIRST_KEY, SECOND_KEY = (f"rdk_{body}" for body in KEY_BODIES)
 
+# Ids of the fixture's redirects (seed.py)
+FIXTURE_IDS = {slug: code for code, slug, _, _ in FIXTURE_REDIRECTS}
+
 SLUG_INVALID = "Use only letters, digits, dots, dashes and underscores, with / between segments."
 TARGET_INVALID = "Enter a full URL that starts with http:// or https://."
 
@@ -142,8 +147,13 @@ def app_server(
         api_enabled=api_enabled,
     )
     bodies = itertools.cycle(KEY_BODIES)
+    ids = (f"New{number:05d}" for number in itertools.count(1))
     app = create_app(
-        settings, clock=lambda: golden.GOLDEN_TIME, new_key=lambda: next(bodies), announcer=FakeAnnouncer()
+        settings,
+        clock=lambda: golden.GOLDEN_TIME,
+        new_key=lambda: next(bodies),
+        announcer=FakeAnnouncer(),
+        make_code=lambda: next(ids),
     )
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     sock.bind(("127.0.0.1", 0))
@@ -327,6 +337,12 @@ def expect_header(page: Page) -> None:
     expect(page.locator(".tagline")).to_have_text("Fixed links that point wherever you need them to.")
 
 
+def id_of(page: Page, base: str, slug: str) -> str:
+    """The id of a redirect, from the API list (ids of created entries depend on the scenario's path)."""
+    redirects = page.request.get(base + "/api/list").json()["redirects"]
+    return next(r["id"] for r in redirects if r["slug"] == slug)
+
+
 def log_in(page: Page) -> None:
     """From the login screen to the app, with the right password."""
     view = page.locator("#login-view")
@@ -363,8 +379,14 @@ def expect_rows(page: Page, rows: tuple[tuple[str, str, str], ...]) -> None:
     expect(items.locator(".link")).to_have_text([PREFIX + slug for _, slug, _ in rows])
     expect(items.locator(".item-name")).to_have_text([name for name, _, _ in rows])
     expect(items.locator(".target-url")).to_have_text([target for _, _, target in rows])
+    # Every entry has its short link, /links/<id>; the fixture's ids are known
+    expect(items.locator(".short-link")).to_have_count(len(rows))
     for index, (name, slug, _) in enumerate(rows):
         item = items.nth(index)
+        short = item.locator(".short-link")
+        expect(short).to_have_text(re.compile(r"^http://[\w.-]+/links/[A-Za-z0-9]{8}$"))
+        if slug in FIXTURE_IDS:
+            expect(short).to_have_text(f"{LINKS_BASE}/links/{FIXTURE_IDS[slug]}")
         expect(item.locator(".link")).to_have_attribute("href", PREFIX + slug)
         expect(item.locator(".link")).to_have_attribute("target", "_blank")
         expect(item.get_by_role("button", name=f"Copy link: {name}", exact=True)).to_have_text("Copy link")
@@ -550,7 +572,7 @@ def main_walk(run: Scenario, data_dir: Path) -> None:
         # A validation error in the dialog is shown there, and the dialog stays open
         save = dialog.get_by_role("button", name="Save changes")
         edit_target.fill("sharepoint/budget.xlsx")
-        with run.watch.http_error(page, base + "/api/redirects/4", 422):
+        with run.watch.http_error(page, base + f"/api/redirects/{id_of(page, base, 'compta/budget-2027')}", 422):
             save.click()
             expect(dialog.locator("#edit-target-error")).to_have_text(TARGET_INVALID)
         expect(dialog).to_be_visible()
@@ -749,8 +771,9 @@ def main_walk(run: Scenario, data_dir: Path) -> None:
         # --- The entry being edited is deleted elsewhere: the dialog closes, the list and the status tell
         items.nth(3).get_by_role("button", name="Edit: Team wiki").click()
         expect(dialog).to_be_visible()
-        assert page.request.delete(base + "/api/redirects/3").status == 204
-        with run.watch.http_error(page, base + "/api/redirects/3", 404):
+        wiki_api = base + f"/api/redirects/{FIXTURE_IDS['wiki']}"
+        assert page.request.delete(wiki_api).status == 204
+        with run.watch.http_error(page, wiki_api, 404):
             dialog.get_by_role("button", name="Save changes").click()
             expect(status).to_have_text("This redirect no longer exists.")
         expect(dialog).to_be_hidden()
@@ -766,10 +789,12 @@ def main_walk(run: Scenario, data_dir: Path) -> None:
         # The same for a delete: the entry is already gone, the status says so, the list catches up
         items.nth(2).get_by_role("button", name="Delete: Redirect api").click()
         expect(delete_dialog).to_be_visible()
-        assert page.request.delete(base + "/api/redirects/2").status == 204
-        # Budget 2028 goes too (id 5: Budget 2027, id 4, was deleted above), leaving a single entry
-        assert page.request.delete(base + "/api/redirects/5").status == 204
-        with run.watch.http_error(page, base + "/api/redirects/2", 404):
+        api_entry = base + f"/api/redirects/{FIXTURE_IDS['local-api/Test1']}"
+        assert page.request.delete(api_entry).status == 204
+        # Budget 2028 goes too, leaving a single entry
+        budget_2028 = base + f"/api/redirects/{id_of(page, base, 'compta/budget-2028')}"
+        assert page.request.delete(budget_2028).status == 204
+        with run.watch.http_error(page, api_entry, 404):
             delete_dialog.get_by_role("button", name="Delete").click()
             expect(status).to_have_text("This redirect no longer exists.")
         expect(delete_dialog).to_be_hidden()

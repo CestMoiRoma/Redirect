@@ -113,13 +113,16 @@
 
   function renderItem(redirect) {
     const item = $('#item-template').content.firstElementChild.cloneNode(true)
-    item.dataset.id = String(redirect.id)
+    item.dataset.id = redirect.id
     item.classList.toggle('is-new', redirect.id === state.highlightId)
     const link = $('.link', item)
     link.href = redirect.public_url
     link.replaceChildren(...breakableUrl(redirect.public_url))
     $('.item-name', item).textContent = redirect.name
     $('.target-url', item).replaceChildren(...breakableUrl(redirect.target))
+    const short = $('.short-link', item)
+    short.href = redirect.short_url
+    short.textContent = redirect.short_url
     $('[data-action="copy"]', item).setAttribute('aria-label', t('list.copy.aria', { name: redirect.name }))
     $('[data-action="edit"]', item).setAttribute('aria-label', t('list.edit.aria', { name: redirect.name }))
     $('[data-action="delete"]', item).setAttribute('aria-label', t('list.delete.aria', { name: redirect.name }))
@@ -626,7 +629,7 @@
     $('#list').addEventListener('click', (event) => {
       const button = event.target.closest('button[data-action]')
       if (!button) return
-      const redirect = findRedirect(Number(button.closest('[data-id]').dataset.id))
+      const redirect = findRedirect(button.closest('[data-id]').dataset.id)
       if (!redirect) return
       if (button.dataset.action === 'copy') copyLink(button, redirect)
       else if (button.dataset.action === 'edit') openEdit(redirect)

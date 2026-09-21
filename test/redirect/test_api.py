@@ -188,9 +188,10 @@ def test_create_returns_the_stored_redirect(public_client):
     response = public_client.post("/api/redirects", json=BUDGET)
     assert response.status_code == 201
     assert response.json() == {
-        "id": 1,
+        "id": "id000001",
         **BUDGET,
         "public_url": "http://redirect.local:8080/redirect/compta/budget-2026",
+        "short_url": "http://redirect.local:8080/links/id000001",
         "created_at": "2026-01-15T09:30:00Z",
         "updated_at": "2026-01-15T09:30:00Z",
     }
@@ -281,7 +282,7 @@ def test_create_with_values_of_the_wrong_type(client):
 def test_create_ignores_unknown_fields(client):
     response = client.post("/api/redirects", json={**BUDGET, "id": 99, "created_at": "yesterday"})
     assert response.status_code == 201
-    assert response.json()["id"] == 1
+    assert response.json()["id"] == "id000001"
     assert response.json()["created_at"] == "2026-01-15T09:30:00Z"
 
 
@@ -357,6 +358,7 @@ def test_update_changes_every_field_and_the_update_time(public_client, clock):
         "name": "Budget 2026",
         "target": "http://new.example/",
         "public_url": "http://redirect.local:8080/redirect/compta/2026/budget",
+        "short_url": f"http://redirect.local:8080/links/{created['id']}",
         "created_at": "2026-01-15T09:30:00Z",
         "updated_at": "2026-01-15T11:30:00Z",
     }
@@ -402,11 +404,11 @@ def test_update_validation_error_leaves_the_redirect_unchanged(client):
     assert client.get("/api/redirects").json()["redirects"] == [created]
 
 
-@pytest.mark.parametrize("redirect_id", ["abc", "1.5"])
-def test_update_with_a_non_integer_id(client, redirect_id):
+@pytest.mark.parametrize("redirect_id", ["abc", "1.5", "0", str(2**63), "id00000!"])
+def test_update_of_an_id_that_names_nothing_is_404(client, redirect_id):
     response = client.put(f"/api/redirects/{redirect_id}", json=BUDGET)
-    assert response.status_code == 422
-    assert response.json() == invalid({})
+    assert response.status_code == 404
+    assert response.json() == {"detail": NOT_FOUND, "errors": {}}
 
 
 # --- Delete --------------------------------------------------------------------------------------------
@@ -432,22 +434,14 @@ def test_delete_of_an_unknown_id_is_404(client):
 def test_a_deleted_slug_can_be_reused(client):
     created = create(client, "wiki")
     client.delete(f"/api/redirects/{created['id']}")
-    assert create(client, "wiki")["id"] == created["id"] + 1
+    assert create(client, "wiki")["id"] != created["id"]
 
 
-@pytest.mark.parametrize("redirect_id", ["0", "-1", str(2**63), "99999999999999999999"])
-@pytest.mark.parametrize("method", ["PUT", "DELETE"])
-def test_an_id_outside_the_sqlite_range_is_404_not_500(client, method, redirect_id):
-    create(client, "wiki")
-    response = client.request(method, f"/api/redirects/{redirect_id}", json=BUDGET if method == "PUT" else None)
+@pytest.mark.parametrize("redirect_id", ["abc", "-1", "99999999999999999999"])
+def test_delete_of_an_id_that_names_nothing_is_404(client, redirect_id):
+    response = client.delete(f"/api/redirects/{redirect_id}")
     assert response.status_code == 404
     assert response.json() == {"detail": NOT_FOUND, "errors": {}}
-
-
-def test_delete_with_a_non_integer_id(client):
-    response = client.delete("/api/redirects/abc")
-    assert response.status_code == 422
-    assert response.json() == invalid({})
 
 
 # --- Methods -------------------------------------------------------------------------------------------
@@ -466,3 +460,8 @@ def test_unknown_paths_outside_redirect_keep_the_json_404(client, path):
     response = client.get(path)
     assert response.status_code == 404
     assert response.json() == {"detail": "Not Found"}
+
+
+def test_api_list_is_the_list_of_redirects(client):
+    create(client, "wiki")
+    assert client.get("/api/list").json() == client.get("/api/redirects").json()

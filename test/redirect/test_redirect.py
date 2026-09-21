@@ -252,3 +252,52 @@ def test_a_missing_database_answers_503_and_is_not_recreated(client, budget, tmp
     assert response.status_code == 503
     assert UNAVAILABLE_TEXT in response.text
     assert not database.exists()
+
+
+# --- The short link: /links/<id> --------------------------------------------------------------------------
+
+
+def test_the_short_link_redirects_like_the_path(client, budget):
+    assert budget["short_url"] == f"http://redirect.lan/links/{budget['id']}"
+    response = client.get(f"/links/{budget['id']}", follow_redirects=False)
+    assert response.status_code == 302
+    assert response.headers["location"] == "http://files.intranet.local/compta/Budget%202026.xlsx"
+    assert response.headers["cache-control"] == "no-store"
+    assert client.head(f"/links/{budget['id']}", follow_redirects=False).status_code == 302
+
+
+def test_the_short_link_follows_a_new_target(client, budget):
+    client.put(
+        f"/api/redirects/{budget['id']}",
+        json={"slug": "compta/2027", "name": budget["name"], "target": "https://sharepoint.example/v2.xlsx"},
+    )
+    response = client.get(f"/links/{budget['id']}", follow_redirects=False)
+    assert response.headers["location"] == "https://sharepoint.example/v2.xlsx"
+
+
+def test_ids_are_case_sensitive(client, budget):
+    assert client.get(f"/links/{budget['id'].upper()}", follow_redirects=False).status_code == 404
+
+
+def test_an_unknown_short_link_is_the_404_page(client, budget):
+    response = client.get("/links/Zz9Zz9Zz", follow_redirects=False)
+    assert response.status_code == 404
+    assert response.headers["content-type"] == "text/html; charset=utf-8"
+    assert not_found_text("/links/Zz9Zz9Zz") in response.text
+
+
+@pytest.mark.parametrize(
+    "raw_path", [b"/links", b"/links/", b"/links/a/b", b"/links/%3Cscript%3E", b"/links/" + b"a" * 40, b"/links/ok%0A"]
+)
+def test_an_invalid_short_link_is_404_and_never_echoed(client, budget, raw_path):
+    response = get_raw(client, raw_path)
+    assert response.status_code == 404
+    assert response.headers["content-type"] == "text/html; charset=utf-8"
+    assert UNKNOWN_TEXT in response.text
+
+
+def test_each_short_link_writes_one_log_line(client, budget, redirect_log):
+    redirect_log.clear()
+    client.get(f"/links/{budget['id']}", follow_redirects=False)
+    client.get("/links/nope", follow_redirects=False)
+    assert redirect_log == [f"link id={budget['id']} status=302", "link id='nope' status=404"]

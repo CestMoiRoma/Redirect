@@ -13,20 +13,21 @@ from redirect.db import Database
 
 FIXTURE_TIME = datetime(2026, 1, 12, 8, 0, 0, tzinfo=UTC)
 
-# (slug, name, target), in insertion order: ids 1, 2, 3
+# (id, slug, name, target), in insertion order
 FIXTURE_REDIRECTS = (
-    ("compta/budget-2026", "Budget 2026", "http://files.intranet.local/compta/Budget%202026.xlsx"),
-    ("local-api/Test1", "Redirect api", "http://10.12.75.1/api/test1"),
-    ("wiki", "Team wiki", "http://wiki.intranet.local/start"),
+    ("Kb7mQx2T", "compta/budget-2026", "Budget 2026", "http://files.intranet.local/compta/Budget%202026.xlsx"),
+    ("R4pZt9Wc", "local-api/Test1", "Redirect api", "http://10.12.75.1/api/test1"),
+    ("W8nHs3Ye", "wiki", "Team wiki", "http://wiki.intranet.local/start"),
 )
 
 
 def write(path: Path) -> None:
     if path.exists():
         path.unlink()
-    db = Database(path, clock=lambda: FIXTURE_TIME)
+    codes = iter(code for code, *_ in FIXTURE_REDIRECTS)
+    db = Database(path, clock=lambda: FIXTURE_TIME, make_code=lambda: next(codes))
     db.migrate()
-    for slug, name, target in FIXTURE_REDIRECTS:
+    for _, slug, name, target in FIXTURE_REDIRECTS:
         db.create(slug, name, target)
 
 

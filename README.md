@@ -73,6 +73,8 @@ The password travels as typed. Over plain HTTP, keep Redirect on a network you t
 
 Open the interface, fill in the path, a name and the target URL under New redirect, then click Create redirect. Copy link on the new entry puts its full public link in the clipboard, ready to share. When the file moves, click Edit on the entry and change the target URL: the link people already have leads to the new target from their next click.
 
+Each redirect also has a short id of 8 characters and a short link, `http://redirect.lan/links/k3F9xQ2a`, shown under its target. It leads to the same target and stays the same when the path changes.
+
 ## Change redirects from a script
 
 Scripts use an API key rather than the password. The API is off at first: turn it on in the API card of the interface, or force it with `API_ENABLED`. Then generate the key in the same card: it is shown once, so copy it then. Only its hash is stored, in the volume, so it survives restarts. Regenerate it when it leaks: the old key stops working at once. The key needs `ADMIN_PASSWORD`, since without a password the API is open anyway.
@@ -83,21 +85,21 @@ Send it as a bearer token to `/api/redirects`:
 KEY=rdk_...
 BASE=http://192.168.1.20
 
-# List: every redirect with its id, slug, name, target and public link
-curl -H "Authorization: Bearer $KEY" $BASE/api/redirects
+# List: every redirect with its id, slug, name, target, public link and short link
+curl -H "Authorization: Bearer $KEY" $BASE/api/list
 
-# Create (201)
+# Create (201): the answer carries the new redirect's id, such as "k3F9xQ2a"
 curl -H "Authorization: Bearer $KEY" -H 'Content-Type: application/json' \
   -d '{"slug": "compta/budget-2026", "name": "Budget 2026", "target": "http://files.lan/budget.xlsx"}' \
   $BASE/api/redirects
 
-# Change the redirect with id 1 (200): send all three fields
+# Change it (200): send all three fields
 curl -X PUT -H "Authorization: Bearer $KEY" -H 'Content-Type: application/json' \
   -d '{"slug": "compta/budget-2026", "name": "Budget 2026", "target": "http://files.lan/budget-v2.xlsx"}' \
-  $BASE/api/redirects/1
+  $BASE/api/redirects/k3F9xQ2a
 
 # Delete it (204)
-curl -X DELETE -H "Authorization: Bearer $KEY" $BASE/api/redirects/1
+curl -X DELETE -H "Authorization: Bearer $KEY" $BASE/api/redirects/k3F9xQ2a
 ```
 
 Errors come back as JSON with a `detail` message and, for invalid fields, one message per field in `errors`: 401 for a missing or wrong key, 403 while the API is off, 404 for an unknown id, 409 for a path already taken, 422 for invalid values. The key only manages redirects: generating a new key takes a login in the interface.

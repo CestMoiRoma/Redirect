@@ -24,6 +24,14 @@ services:
       # PORT: 80
       # Scripts' API: off until turned on in the interface (API card). true or false here forces it.
       # API_ENABLED: 'true'
+      # The interface and the API only answer the local network, unless turned off in the interface (Access
+      # card). true or false here forces it. The links work from anywhere either way.
+      # LOCAL_ONLY: 'true'
+      # No interface at all: the API only, with the API key, written once to the log on the first start
+      # (docker compose logs redirect). A new key: docker compose exec redirect python -m redirect api-key
+      # HEADLESS: 'true'
+      # Days the log keeps its events
+      # LOG_RETENTION_DAYS: 90
       # Base of the public links, over the hostname of the interface: set it for a reverse proxy serving HTTPS.
       # PUBLIC_BASE_URL: https://go.example.org
       # Addresses whose X-Forwarded-* headers are trusted (scheme and client IP). The default trusts the

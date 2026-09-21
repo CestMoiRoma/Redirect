@@ -45,6 +45,9 @@ The interface is then at `http://192.168.1.20/`, and the links read `http://redi
 | --------------------- | --------------- | -------------------------------------------------------------------------------------------------------------- |
 | `ADMIN_PASSWORD`      | unset           | Password of the interface, 8 characters or more. Unset, the interface and the API are open to anyone.          |
 | `API_ENABLED`         | unset           | `true` or `false` forces the scripts' API on or off. Unset, the switch in the interface decides, off at first. |
+| `LOCAL_ONLY`          | unset           | `true` or `false` forces the local-only access on or off. Unset, the Access card decides, on at first.         |
+| `HEADLESS`            | `false`         | `true` turns the interface off: the redirects are managed through the API, with the API key.                   |
+| `LOG_RETENTION_DAYS`  | `90`            | Days the log keeps its events.                                                                                 |
 | `PORT`                | `80`            | Port the server listens on. Change it only when port 80 of the container's address is taken.                   |
 | `DATA_DIR`            | `/data`         | Folder of `redirect.db`. The server runs as uid 10001, which must be able to write there.                      |
 | `PUBLIC_BASE_URL`     | unset           | Base of the links, e.g. `https://go.example.org`, over the hostname of the interface. For a reverse proxy.     |
@@ -69,17 +72,35 @@ Without it, anyone who can reach the port can create, change or delete redirects
 
 The password travels as typed. Over plain HTTP, keep Redirect on a network you trust. To reach it from outside, put a reverse proxy serving HTTPS in front of it and publish the container's port to that proxy only.
 
+### Keep the interface on the local network
+
+Redirect's interface and API only answer addresses of the local network: the private IPv4 ranges, loopback, link-local, IPv6 ULA, and `100.64.0.0/10`, which Tailscale and similar VPNs use. Any other address gets a 403, so an interface exposed to the internet by mistake stays closed. The links under `/redirect/` and `/links/` work from anywhere, which is what a printed QR code needs. The Access card turns this off, and `LOCAL_ONLY` forces it either way.
+
+Behind a reverse proxy, Redirect sees the proxy's address, which is local, for every visitor. Set `FORWARDED_ALLOW_IPS` to the proxy's address so that Redirect reads the visitor's real address from `X-Forwarded-For`.
+
 ## Create a link and change its target later
 
 Open the interface, fill in the path, a name and the target URL under New redirect, then click Create redirect. Copy link on the new entry puts its full public link in the clipboard, ready to share. When the file moves, click Edit on the entry and change the target URL: the link people already have leads to the new target from their next click.
 
 Each redirect also has a short id of 8 characters and a short link, `http://redirect.lan/links/k3F9xQ2a`, shown under its target. It leads to the same target and stays the same when the path changes.
 
+Paths starting with `Api`, `QRcodes` or `NanoURL` are kept for Redirect's own sections: a redirect typed by hand cannot use them.
+
+## Share a NanoURL or a QR code
+
+A NanoURL is a short link made from a name and a target: the NanoURL section gives `http://redirect.lan/links/k3F9xQ2a` and files it under `NanoURL/<name>`. Change its target later and the short link stays.
+
+A QR code works the same way under `QRcodes/<name>`, and the code carries the short link, so a printed QR code follows the target you set afterwards. The QR codes section chooses its look: the color and shape of the modules and of the corners, a background color or none, a logo in the center, the margin. A preview follows each change, and Download SVG saves the file. Colors too close to the background are refused, since scanners could not read them. The link inside the code uses the hostname of the moment: change the hostname and the QR codes you print afterwards change too.
+
+## Read the log
+
+The Logs section lists every visit of a link with its date, path, code, the visitor's address and browser, every change of a redirect with who made it (the interface or a script), and every read of the API by a script. It keeps the last `LOG_RETENTION_DAYS` days, 90 by default, and drops older events on its own.
+
 ## Change redirects from a script
 
-Scripts use an API key rather than the password. The API is off at first: turn it on in the API card of the interface, or force it with `API_ENABLED`. Then generate the key in the same card: it is shown once, so copy it then. Only its hash is stored, in the volume, so it survives restarts. Regenerate it when it leaks: the old key stops working at once. The key needs `ADMIN_PASSWORD`, since without a password the API is open anyway.
+Scripts use an API key rather than the password. The API is off at first: turn it on in the API card of the interface, or force it with `API_ENABLED`. Then generate the key in the same card: it is shown once, so copy it then. Only its hash is stored, in the volume, so it survives restarts. Regenerate it when it leaks: the old key stops working at once. The key needs `ADMIN_PASSWORD` or `HEADLESS`, since without a password the API is open anyway.
 
-Send it as a bearer token to `/api/redirects`:
+Send it as a bearer token:
 
 ```sh
 KEY=rdk_...
@@ -102,7 +123,27 @@ curl -X PUT -H "Authorization: Bearer $KEY" -H 'Content-Type: application/json' 
 curl -X DELETE -H "Authorization: Bearer $KEY" $BASE/api/redirects/k3F9xQ2a
 ```
 
-Errors come back as JSON with a `detail` message and, for invalid fields, one message per field in `errors`: 401 for a missing or wrong key, 403 while the API is off, 404 for an unknown id, 409 for a path already taken, 422 for invalid values. The key only manages redirects: generating a new key takes a login in the interface.
+The other routes take the same key:
+
+- `GET /api/logs` returns the log, newest first: `limit` (1 to 1000, 100 by default), `before` (the `next` of the previous page) and `kind` (`visits`, `changes` or `reads`).
+- `POST /api/nanourls` with a `name` and a `target` creates a NanoURL and answers 201 with its `id` and its `short_url`. `GET` lists them, `PUT` and `DELETE /api/nanourls/<id>` change or remove one.
+- `POST /api/qrcodes` with a `name`, a `target` and an optional `design` creates a QR code and answers 201 with its `id` and the image itself in `svg`. `GET /api/qrcodes/<id>/svg` serves the file, and `PUT` and `DELETE /api/qrcodes/<id>` change or remove one. A `design` holds `color`, `eye_color` and `background` (`#rrggbb`, or `transparent` for the background), `module_style` (`square`, `rounded` or `dots`), `eye_style` (`square`, `rounded` or `circle`), `logo` (a `data:image/...;base64,` URI), `logo_size` (0.1 to 0.3) and `margin` (0 to 10).
+
+Errors come back as JSON with a `detail` message and, for invalid fields, one message per field in `errors`: 401 for a missing or wrong key, 403 while the API is off or from outside the local network, 404 for an unknown id, 409 for a path or a name already taken, 422 for invalid values. The key only manages redirects: generating a new key takes a login in the interface.
+
+## Run it without the interface
+
+With `HEADLESS=true`, the interface is off: its address answers 404, and the redirects, NanoURLs, QR codes and the log are only reachable through the API, with the API key. On its first start, a headless Redirect creates a key and writes it once to its log:
+
+```sh
+docker compose logs redirect | grep "API key created"
+```
+
+To get a new key, which replaces the old one at once, even while Redirect runs:
+
+```sh
+docker compose exec redirect python -m redirect api-key
+```
 
 ## Work on the code
 

@@ -1,6 +1,7 @@
 """API schemas. Slug, name and target validation lives here, and only here."""
 
 import re
+import unicodedata
 from urllib.parse import quote, urlsplit, urlunsplit
 
 from pydantic import BaseModel, field_validator
@@ -141,6 +142,21 @@ def validate_hostname(value: str) -> str:
     return hostname
 
 
+NANO_SECTION = "NanoURL"
+QRCODE_SECTION = "QRcodes"
+_NOT_IN_SEGMENT = re.compile(r"[^A-Za-z0-9._-]+")
+
+
+def slug_from_name(section: str, name: str) -> str:
+    """The path of a NanoURL or a QR code: <section>/<name>, accents dropped, other characters made dashes."""
+    ascii_name = unicodedata.normalize("NFKD", name).encode("ascii", "ignore").decode("ascii")
+    segment = _NOT_IN_SEGMENT.sub("-", ascii_name).strip("-.")
+    segment = re.sub(r"-{2,}", "-", segment)
+    if not segment:
+        raise _error("name_unusable")
+    return validate_slug(f"{section}/{segment}")
+
+
 def public_url(base_url: str, slug: str) -> str:
     """The link people are given: <base>/redirect/<slug>."""
     return base_url.rstrip("/") + REDIRECT_PREFIX + slug
@@ -182,6 +198,8 @@ class RedirectIn(BaseModel):
 
 
 class RedirectOut(BaseModel):
+    # link (typed by hand), nano (a NanoURL) or qrcode
+    kind: str
     # The short id: /links/<id>, and the redirect's name in the API (PUT and DELETE /api/redirects/<id>)
     id: str
     slug: str
@@ -286,3 +304,20 @@ class LogsOut(BaseModel):
 
     events: list[EventOut]
     next: int | None
+
+
+class NanoIn(BaseModel):
+    """Body of POST /api/nanourls and PUT /api/nanourls/<id>: the path comes from the name."""
+
+    name: str
+    target: str
+
+    @field_validator("name")
+    @classmethod
+    def _name(cls, value: str) -> str:
+        return validate_name(value)
+
+    @field_validator("target")
+    @classmethod
+    def _target(cls, value: str) -> str:
+        return validate_target(value)

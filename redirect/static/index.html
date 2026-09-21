@@ -45,9 +45,48 @@
     <div class="wrap" id="tabs" hidden>
       <nav class="tabs" data-i18n-aria-label="nav.label">
         <a href="#/" data-view="redirects" data-i18n="nav.redirects"></a>
+        <a href="#/nano" data-view="nano" data-i18n="nav.nano"></a>
         <a href="#/logs" data-view="logs" data-i18n="nav.logs"></a>
       </nav>
     </div>
+
+    <main class="wrap layout" id="nano-view" hidden>
+      <section class="list-section" aria-labelledby="nano-title">
+        <div class="list-head">
+          <h2 id="nano-title" tabindex="-1"><span data-i18n="nano.title"></span> <span class="count" id="nano-count"></span></h2>
+        </div>
+        <p class="hint section-help" data-i18n="nano.help"></p>
+        <p id="nano-status" class="status" role="status" aria-live="polite" hidden></p>
+        <ul id="nano-list" class="list"></ul>
+        <div id="nano-empty" class="empty" hidden>
+          <p class="empty-title" data-i18n="nano.empty.title"></p>
+          <p data-i18n="nano.empty.text"></p>
+        </div>
+      </section>
+
+      <div class="side">
+        <section class="card create" aria-labelledby="nano-create-title">
+          <h2 id="nano-create-title" data-i18n="nano.create.title"></h2>
+          <form id="nano-form" class="redirect-form" novalidate>
+            <div class="field">
+              <label for="nano-name" data-i18n="form.name.label"></label>
+              <input id="nano-name" name="name" type="text" autocomplete="off" aria-describedby="nano-name-hint nano-name-error" />
+              <p class="hint" id="nano-name-hint" data-i18n="nano.name.hint"></p>
+              <p class="field-error" id="nano-name-error" hidden></p>
+            </div>
+            <div class="field">
+              <label for="nano-target" data-i18n="form.target.label"></label>
+              <input id="nano-target" name="target" type="url" inputmode="url" autocomplete="off" spellcheck="false" aria-describedby="nano-target-error" />
+              <p class="field-error" id="nano-target-error" hidden></p>
+            </div>
+            <p class="form-error" role="alert" hidden></p>
+            <div class="form-actions">
+              <button type="submit" class="button primary" data-i18n="nano.create.submit"></button>
+            </div>
+          </form>
+        </section>
+      </div>
+    </main>
 
     <main class="wrap" id="logs-view" hidden>
       <section class="card logs" aria-labelledby="logs-title">
@@ -225,6 +264,28 @@
           <label for="edit-target" data-i18n="form.target.label"></label>
           <input id="edit-target" name="target" type="url" inputmode="url" autocomplete="off" spellcheck="false" aria-describedby="edit-target-error" />
           <p class="field-error" id="edit-target-error" hidden></p>
+        </div>
+        <p class="form-error" role="alert" hidden></p>
+        <div class="form-actions">
+          <button type="button" class="button" data-action="close" data-i18n="form.cancel"></button>
+          <button type="submit" class="button primary" data-i18n="form.edit.submit"></button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="nano-dialog" class="dialog" aria-labelledby="nano-dialog-title">
+      <form id="nano-edit-form" class="redirect-form" novalidate>
+        <h2 id="nano-dialog-title" data-i18n="nano.edit.title"></h2>
+        <div class="field">
+          <label for="nano-edit-name" data-i18n="form.name.label"></label>
+          <input id="nano-edit-name" name="name" type="text" autocomplete="off" aria-describedby="nano-edit-name-hint nano-edit-name-error" />
+          <p class="hint" id="nano-edit-name-hint" data-i18n="nano.name.hint"></p>
+          <p class="field-error" id="nano-edit-name-error" hidden></p>
+        </div>
+        <div class="field">
+          <label for="nano-edit-target" data-i18n="form.target.label"></label>
+          <input id="nano-edit-target" name="target" type="url" inputmode="url" autocomplete="off" spellcheck="false" aria-describedby="nano-edit-target-error" />
+          <p class="field-error" id="nano-edit-target-error" hidden></p>
         </div>
         <p class="form-error" role="alert" hidden></p>
         <div class="form-actions">

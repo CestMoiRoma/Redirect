@@ -627,6 +627,10 @@ input[aria-invalid='true'] {
   color: var(--accent);
 }
 
+.section-help {
+  margin-bottom: 14px;
+}
+
 .logs-head {
   display: flex;
   flex-wrap: wrap;

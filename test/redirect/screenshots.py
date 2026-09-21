@@ -80,6 +80,9 @@ SHOTS = (
     "31-environment",
     "32-logs",
     "33-logs-changes",
+    "34-nano-empty",
+    "35-nano-created",
+    "36-nano-name-taken",
 )
 
 # Web fonts each kind of page must have loaded (and so rendered with) when captured
@@ -1068,7 +1071,7 @@ def logs_walk(run: Scenario, data_dir: Path) -> None:
         page.goto(base + "/")
         log_in(page)
         tabs = page.get_by_role("navigation", name="Sections")
-        expect(tabs.get_by_role("link")).to_have_text(["Redirects", "Logs"])
+        expect(tabs.get_by_role("link")).to_have_text(["Redirects", "NanoURL", "Logs"])
         expect(tabs.get_by_role("link", name="Redirects")).to_have_attribute("aria-current", "page")
         view = page.locator("#logs-view")
 
@@ -1136,6 +1139,95 @@ def logs_walk(run: Scenario, data_dir: Path) -> None:
         page.context.close()
 
 
+def nano_walk(run: Scenario, data_dir: Path) -> None:
+    """NanoURL: empty, created (copied, followed), a name already used, changed, deleted."""
+    shutil.copyfile(FIXTURE_DB, data_dir / "redirect.db")
+    with app_server(data_dir) as base:
+        page = run.open(base)
+        page.goto(base + "/")
+        log_in(page)
+        page.get_by_role("navigation", name="Sections").get_by_role("link", name="NanoURL").click()
+        view = page.locator("#nano-view")
+        items = view.locator("#nano-list .item")
+        status = view.locator("#nano-status")
+
+        # --- Nothing yet
+        expect(view).to_be_visible()
+        expect(page.locator("#main")).to_be_hidden()
+        expect(view.get_by_role("heading", level=2, name="NanoURLs")).to_be_visible()
+        expect(view.locator("#nano-empty p")).to_have_text(
+            ["No NanoURL yet", "Give a name and a target in the form: Redirect makes the short link."]
+        )
+        form = view.locator("#nano-form")
+        name, target = form.get_by_label("Name"), form.get_by_label("Target URL")
+        submit = form.get_by_role("button", name="Create NanoURL")
+        run.shot(page, "34-nano-empty", fonts=FORM_FONTS)
+
+        # --- Created: its short link comes first, ready to copy
+        name.fill("Team lunch")
+        target.fill("http://wiki.intranet.local/lunch")
+        submit.click()
+        short = f"{LINKS_BASE}/links/New00001"
+        expect(status).to_have_text(f"NanoURL “Team lunch” created: {short}")
+        expect(items).to_have_count(1)
+        expect(items.locator(".link")).to_have_text(short)
+        expect(items.locator(".item-name")).to_have_text("Team lunch")
+        expect(items.locator(".target-url")).to_have_text("http://wiki.intranet.local/lunch")
+        expect(items.locator(".item-short")).to_be_hidden()
+        expect(view.locator("#nano-count")).to_have_text("1 NanoURL")
+        copy = items.get_by_role("button", name="Copy link: Team lunch")
+        expect(copy).to_be_focused()
+        run.shot(page, "35-nano-created")
+        copy.click()
+        expect(copy).to_have_text("Copied")
+        assert page.evaluate("() => navigator.clipboard.readText()") == short
+        page.clock.run_for(2000)
+        expect(copy).to_have_text("Copy link")
+        with page.expect_popup() as popup_info:
+            items.get_by_role("link", name=short).click()
+        landed = popup_info.value
+        expect(landed).to_have_url("http://wiki.intranet.local/lunch")
+        landed.close()
+
+        # --- The same name again: its path is taken
+        name.fill("Team  lunch!")
+        target.fill("http://wiki.intranet.local/other")
+        with run.watch.http_error(page, base + "/api/nanourls", 409):
+            submit.click()
+            expect(view.locator("#nano-name-error")).to_have_text("This name is already used in this section.")
+        expect(name).to_be_focused()
+        run.shot(page, "36-nano-name-taken")
+
+        # --- Not a redirect of the Redirects list
+        page.get_by_role("link", name="Redirects").click()
+        expect_rows(page, FIXTURE_ROWS)
+        page.get_by_role("link", name="NanoURL").click()
+
+        # --- Changed: the short link stays, the target moves
+        items.get_by_role("button", name="Edit: Team lunch").click()
+        dialog = page.locator("#nano-dialog")
+        expect(dialog.get_by_role("heading", level=2)).to_have_text("Edit NanoURL")
+        expect(dialog.get_by_label("Name")).to_have_value("Team lunch")
+        edit_target = dialog.get_by_label("Target URL")
+        expect(edit_target).to_be_focused()
+        edit_target.fill("http://wiki.intranet.local/friday")
+        dialog.get_by_role("button", name="Save changes").click()
+        expect(status).to_have_text("Redirect “Team lunch” saved.")
+        expect(items.locator(".link")).to_have_text(short)
+        expect(items.locator(".target-url")).to_have_text("http://wiki.intranet.local/friday")
+
+        # --- Deleted
+        items.get_by_role("button", name="Delete: Team lunch").click()
+        expect(page.locator("#delete-text")).to_have_text(
+            f"The link {short} will stop working for everyone who has it."
+        )
+        page.locator("#delete-dialog").get_by_role("button", name="Delete").click()
+        expect(status).to_have_text("Redirect “Team lunch” deleted.")
+        expect(view.locator("#nano-empty")).to_be_visible()
+        expect(page.locator("#nano-title")).to_be_focused()
+        page.context.close()
+
+
 def open_mode(run: Scenario, data_dir: Path) -> None:
     """No admin password: no login, and a red warning that stays on screen."""
     shutil.copyfile(FIXTURE_DB, data_dir / "redirect.db")
@@ -1172,7 +1264,7 @@ def main(out_dir: Path) -> int:
                 with tempfile.TemporaryDirectory() as empty, tempfile.TemporaryDirectory() as seeded:
                     empty_list(run, Path(empty))
                     main_walk(run, Path(seeded))
-                for walk in (auth_walk, settings_walk, environment_walk, logs_walk, open_mode):
+                for walk in (auth_walk, settings_walk, environment_walk, logs_walk, nano_walk, open_mode):
                     with tempfile.TemporaryDirectory() as data:
                         walk(run, Path(data))
             browser.close()

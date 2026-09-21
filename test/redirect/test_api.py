@@ -188,6 +188,7 @@ def test_create_returns_the_stored_redirect(public_client):
     response = public_client.post("/api/redirects", json=BUDGET)
     assert response.status_code == 201
     assert response.json() == {
+        "kind": "link",
         "id": "id000001",
         **BUDGET,
         "public_url": "http://redirect.local:8080/redirect/compta/budget-2026",
@@ -353,6 +354,7 @@ def test_update_changes_every_field_and_the_update_time(public_client, clock):
     )
     assert response.status_code == 200
     assert response.json() == {
+        "kind": "link",
         "id": created["id"],
         "slug": "compta/2026/budget",
         "name": "Budget 2026",

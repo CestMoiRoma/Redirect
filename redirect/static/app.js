@@ -84,19 +84,30 @@
     state.baseUrl = data.base_url
     state.redirects = data.redirects
     render()
+    renderNanos()
+  }
+
+  function ofKind(kind) {
+    return state.redirects.filter((r) => r.kind === kind)
   }
 
   // --- Status line ------------------------------------------------------------------------------------
 
+  // Where each kind of entry is listed: its list, its heading and its status line
+  const PLACES = {
+    link: { list: '#list', title: '#list-title', status: '#status' },
+    nano: { list: '#nano-list', title: '#nano-title', status: '#nano-status' },
+  }
+
   // The status line tells the outcome of the last action: a new action starts without it
-  function clearStatus() {
-    const status = $('#status')
+  function clearStatus(place = PLACES.link) {
+    const status = $(place.status)
     status.textContent = ''
     status.hidden = true
   }
 
-  function setStatus(message, isError = false) {
-    const status = $('#status')
+  function setStatus(message, isError = false, place = PLACES.link) {
+    const status = $(place.status)
     status.textContent = message
     status.classList.toggle('status-error', isError)
     status.hidden = false
@@ -117,13 +128,16 @@
     return parts.flatMap((part, index) => (index ? [document.createElement('wbr'), part] : [part]))
   }
 
+  // One entry of a list. A NanoURL shows its short link first, and no second link.
   function renderItem(redirect) {
     const item = $('#item-template').content.firstElementChild.cloneNode(true)
+    const main = redirect.kind === 'nano' ? redirect.short_url : redirect.public_url
     item.dataset.id = redirect.id
     item.classList.toggle('is-new', redirect.id === state.highlightId)
     const link = $('.link', item)
-    link.href = redirect.public_url
-    link.replaceChildren(...breakableUrl(redirect.public_url))
+    link.href = main
+    link.replaceChildren(...breakableUrl(main))
+    $('.item-short', item).hidden = redirect.kind === 'nano'
     $('.item-name', item).textContent = redirect.name
     $('.target-url', item).replaceChildren(...breakableUrl(redirect.target))
     const short = $('.short-link', item)
@@ -136,9 +150,10 @@
   }
 
   function render() {
-    const total = state.redirects.length
+    const links = ofKind('link')
+    const total = links.length
     const query = state.filter.trim().toLowerCase()
-    const shown = query ? state.redirects.filter((r) => matches(r, query)) : state.redirects
+    const shown = query ? links.filter((r) => matches(r, query)) : links
 
     const list = $('#list')
     list.replaceChildren(...shown.map(renderItem))
@@ -163,8 +178,8 @@
     return state.redirects.find((r) => r.id === id) || null
   }
 
-  function focusInItem(id, action) {
-    const button = document.querySelector(`#list [data-id="${id}"] [data-action="${action}"]`)
+  function focusInItem(id, action, place = PLACES.link) {
+    const button = document.querySelector(`${place.list} [data-id="${id}"] [data-action="${action}"]`)
     if (button) button.focus()
   }
 
@@ -198,14 +213,14 @@
 
   const copyTimers = new WeakMap()
 
-  async function copyLink(button, redirect) {
-    const copied = await copyText(redirect.public_url)
+  async function copyLink(button, url, place = PLACES.link) {
+    const copied = await copyText(url)
     button.focus()
     button.textContent = copied ? t('list.copied') : t('list.copy.failed')
     button.classList.toggle('is-copied', copied)
     button.classList.toggle('is-failed', !copied)
     // The status line is announced to screen readers: it must never keep a stale "copied" message
-    setStatus(copied ? t('status.copied') : t('status.copy_failed'), !copied)
+    setStatus(copied ? t('status.copied') : t('status.copy_failed'), !copied, place)
     clearTimeout(copyTimers.get(button))
     copyTimers.set(
       button,
@@ -218,12 +233,17 @@
 
   // --- Forms ------------------------------------------------------------------------------------------
 
+  // The fields a form has: a NanoURL's form has no path
+  function fieldsOf(form) {
+    return FIELDS.filter((name) => form.elements[name])
+  }
+
   function formValues(form) {
-    return Object.fromEntries(FIELDS.map((name) => [name, form.elements[name].value]))
+    return Object.fromEntries(fieldsOf(form).map((name) => [name, form.elements[name].value]))
   }
 
   function clearErrors(form) {
-    for (const name of FIELDS) {
+    for (const name of fieldsOf(form)) {
       const input = form.elements[name]
       input.removeAttribute('aria-invalid')
       const error = $(`#${input.id}-error`)
@@ -237,7 +257,7 @@
 
   function showErrors(form, error) {
     let first = null
-    for (const name of FIELDS) {
+    for (const name of fieldsOf(form)) {
       const message = error.errors[name]
       if (!message) continue
       const input = form.elements[name]
@@ -256,11 +276,11 @@
     }
   }
 
-  async function submitting(form, action) {
+  async function submitting(form, action, place = PLACES.link) {
     const submit = $('[type="submit"]', form)
     submit.disabled = true
     clearErrors(form)
-    clearStatus()
+    clearStatus(place)
     try {
       await action()
     } catch (error) {
@@ -271,8 +291,8 @@
         form.closest('dialog')?.close()
         state.highlightId = null
         await reload().catch(() => {})
-        setStatus(error.message, true)
-        $('#list-title').focus()
+        setStatus(error.message, true, place)
+        $(place.title).focus()
       } else {
         showErrors(form, error)
       }
@@ -335,7 +355,7 @@
     const form = $('#edit-form')
     state.editing = redirect
     clearErrors(form)
-    for (const name of FIELDS) form.elements[name].value = redirect[name]
+    for (const name of fieldsOf(form)) form.elements[name].value = redirect[name]
     $('#edit-slug-warning').textContent = ''
     dialog.showModal()
     // Changing the target is the usual edit: land there, ready to paste
@@ -347,36 +367,111 @@
     const dialog = $('#delete-dialog')
     const confirm = $('#delete-confirm')
     confirm.addEventListener('click', async () => {
-      const redirect = state.deleting
+      const { redirect, place } = state.deleting
       confirm.disabled = true
-      clearStatus()
+      clearStatus(place)
       try {
         await api('DELETE', `/api/redirects/${redirect.id}`)
-        setStatus(t('status.deleted', { name: redirect.name }))
+        setStatus(t('status.deleted', { name: redirect.name }), false, place)
       } catch (error) {
         if (!(error instanceof ApiError)) throw error
-        if (error.status !== 401) setStatus(error.message, true)
+        if (error.status !== 401) setStatus(error.message, true, place)
       } finally {
         confirm.disabled = false
         state.deleting = null
         dialog.close()
       }
       state.highlightId = null
-      await reload().catch(() => setStatus(t('status.network'), true))
-      $('#list-title').focus()
+      await reload().catch(() => setStatus(t('status.network'), true, place))
+      $(place.title).focus()
     })
     dialog.addEventListener('close', () => {
-      const id = state.deleting && state.deleting.id
+      const deleting = state.deleting
       state.deleting = null
-      if (id !== null) focusInItem(id, 'delete')
+      if (deleting !== null) focusInItem(deleting.redirect.id, 'delete', deleting.place)
     })
   }
 
-  function openDelete(redirect) {
-    state.deleting = redirect
+  // Any redirect is deleted the same way; `url` is the link that will stop working
+  function openDelete(redirect, url, place) {
+    state.deleting = { redirect, place }
     $('#delete-name').textContent = redirect.name
-    $('#delete-text').textContent = t('delete.text', { url: redirect.public_url })
+    $('#delete-text').textContent = t('delete.text', { url })
     $('#delete-dialog').showModal()
+  }
+
+  // --- NanoURLs ---------------------------------------------------------------------------------------
+
+  function renderNanos() {
+    const nanos = ofKind('nano')
+    const list = $('#nano-list')
+    list.replaceChildren(...nanos.map(renderItem))
+    list.hidden = nanos.length === 0
+    $('#nano-empty').hidden = nanos.length !== 0
+    const count = $('#nano-count')
+    count.textContent = nanos.length === 1 ? t('nano.count.one') : t('nano.count.other', { count: nanos.length })
+    count.hidden = nanos.length === 0
+  }
+
+  function setupNanos() {
+    const place = PLACES.nano
+    const form = $('#nano-form')
+    form.addEventListener('submit', (event) => {
+      event.preventDefault()
+      submitting(
+        form,
+        async () => {
+          const created = await api('POST', '/api/nanourls', formValues(form))
+          form.reset()
+          state.highlightId = created.id
+          await reload()
+          setStatus(t('nano.created', { name: created.name, url: created.short_url }), false, place)
+          focusInItem(created.id, 'copy', place)
+        },
+        place,
+      )
+    })
+
+    const dialog = $('#nano-dialog')
+    const editForm = $('#nano-edit-form')
+    editForm.addEventListener('submit', (event) => {
+      event.preventDefault()
+      const id = state.editing.id
+      submitting(
+        editForm,
+        async () => {
+          const saved = await api('PUT', `/api/nanourls/${id}`, formValues(editForm))
+          dialog.close()
+          state.highlightId = saved.id
+          await reload()
+          setStatus(t('status.saved', { name: saved.name }), false, place)
+          focusInItem(saved.id, 'edit', place)
+        },
+        place,
+      )
+    })
+    dialog.addEventListener('close', () => {
+      const id = state.editing && state.editing.id
+      state.editing = null
+      if (id !== null) focusInItem(id, 'edit', place)
+    })
+
+    $('#nano-list').addEventListener('click', (event) => {
+      const button = event.target.closest('button[data-action]')
+      if (!button) return
+      const nano = findRedirect(button.closest('[data-id]').dataset.id)
+      if (!nano) return
+      if (button.dataset.action === 'copy') copyLink(button, nano.short_url, place)
+      else if (button.dataset.action === 'delete') openDelete(nano, nano.short_url, place)
+      else if (button.dataset.action === 'edit') {
+        state.editing = nano
+        clearErrors(editForm)
+        for (const name of fieldsOf(editForm)) editForm.elements[name].value = nano[name]
+        dialog.showModal()
+        editForm.elements.target.focus()
+        editForm.elements.target.select()
+      }
+    })
   }
 
   // --- Login ------------------------------------------------------------------------------------------
@@ -384,8 +479,7 @@
   function showLogin() {
     document.querySelectorAll('dialog[open]').forEach((dialog) => dialog.close())
     state.appShown = false
-    $('#main').hidden = true
-    $('#logs-view').hidden = true
+    for (const selector of Object.values(VIEWS)) $(selector).hidden = true
     $('#tabs').hidden = true
     $('#logout').hidden = true
     $('#open-warning').hidden = true
@@ -596,10 +690,11 @@
 
   // --- Sections: redirects, log ------------------------------------------------------------------------
 
-  const VIEWS = { redirects: '#main', logs: '#logs-view' }
+  const VIEWS = { redirects: '#main', nano: '#nano-view', logs: '#logs-view' }
+  const VIEW_HASHES = { '#/nano': 'nano', '#/logs': 'logs' }
 
   function currentView() {
-    return location.hash === '#/logs' ? 'logs' : 'redirects'
+    return VIEW_HASHES[location.hash] || 'redirects'
   }
 
   function showView() {
@@ -695,8 +790,7 @@
   // --- Start ------------------------------------------------------------------------------------------
 
   function showLoadError() {
-    $('#main').hidden = true
-    $('#logs-view').hidden = true
+    for (const selector of Object.values(VIEWS)) $(selector).hidden = true
     $('#tabs').hidden = true
     const loadError = $('#load-error')
     loadError.textContent = t('status.load_failed')
@@ -742,9 +836,9 @@
       if (!button) return
       const redirect = findRedirect(button.closest('[data-id]').dataset.id)
       if (!redirect) return
-      if (button.dataset.action === 'copy') copyLink(button, redirect)
+      if (button.dataset.action === 'copy') copyLink(button, redirect.public_url)
       else if (button.dataset.action === 'edit') openEdit(redirect)
-      else if (button.dataset.action === 'delete') openDelete(redirect)
+      else if (button.dataset.action === 'delete') openDelete(redirect, redirect.public_url, PLACES.link)
     })
     $('#filter').addEventListener('input', (event) => {
       state.filter = event.target.value
@@ -769,6 +863,7 @@
     setupKey()
     setupSettings()
     setupLogs()
+    setupNanos()
     await start()
   }
 

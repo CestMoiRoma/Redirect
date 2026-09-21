@@ -48,6 +48,7 @@ from .mdns import Announcer, ZeroconfAnnouncer
 from .models import (
     DEFAULT_HOSTNAME,
     LINKS_PREFIX,
+    NANO_SECTION,
     REDIRECT_PREFIX,
     ApiKeyOut,
     AuthOut,
@@ -55,6 +56,7 @@ from .models import (
     EventOut,
     LoginIn,
     LogsOut,
+    NanoIn,
     NewApiKeyOut,
     RedirectIn,
     RedirectList,
@@ -65,6 +67,7 @@ from .models import (
     is_valid_slug,
     public_url,
     short_url,
+    slug_from_name,
     validate_target,
 )
 from .strings import t
@@ -243,7 +246,7 @@ class BodySizeLimit:
 
 
 # What an API key may call: everything that reads or changes redirects
-KEY_API_PREFIXES = ("/api/redirects", "/api/list", "/api/logs")
+KEY_API_PREFIXES = ("/api/redirects", "/api/list", "/api/logs", "/api/nanourls", "/api/qrcodes")
 # Filters of GET /api/logs and the actions they keep
 LOG_FILTERS = {"visits": ("visit",), "changes": ("create", "update", "delete"), "reads": ("read",)}
 # The log is purged at startup, then at most this often
@@ -423,6 +426,7 @@ def create_app(
     def out(redirect: Redirect, request: Request) -> RedirectOut:
         base = base_url(request)
         return RedirectOut(
+            kind=redirect.kind,
             id=redirect.code,
             slug=redirect.slug,
             name=redirect.name,
@@ -601,6 +605,9 @@ def create_app(
 
     @app.put("/api/redirects/{redirect_id}", response_model=RedirectOut, responses={404: {"model": ErrorOut}})
     def update_redirect(redirect_id: str, body: RedirectIn, request: Request) -> Response | RedirectOut:
+        existing = db.get(redirect_id)
+        if existing is not None and existing.kind != "link":
+            return _error(409, t("errors.wrong_route"))
         try:
             updated = db.update(redirect_id, body.slug, body.name, body.target)
         except SlugTakenError:
@@ -619,6 +626,80 @@ def create_app(
         logger.info("deleted id=%s slug=%s", deleted.code, deleted.slug)
         record("delete", request, redirect=deleted)
         return Response(status_code=204)
+
+    # --- NanoURLs and QR codes: redirects whose path comes from their name ---------------------------------
+
+    def name_taken() -> JSONResponse:
+        return _error(409, t("errors.name_taken"), {"name": t("errors.name_taken")})
+
+    def named_slug(section: str, name: str) -> str | JSONResponse:
+        try:
+            return slug_from_name(section, name)
+        except PydanticCustomError as exc:
+            return _error(422, t("errors.fields_invalid"), {"name": exc.message()})
+
+    def create_named(
+        section: str, kind: str, name: str, target: str, design: str | None, request: Request
+    ) -> Response | Redirect:
+        slug = named_slug(section, name)
+        if isinstance(slug, JSONResponse):
+            return slug
+        try:
+            created = db.create(slug, name, target, kind, design)
+        except SlugTakenError:
+            return name_taken()
+        logger.info("created %s id=%s slug=%s", kind, created.code, created.slug)
+        record("create", request, redirect=created)
+        return created
+
+    def update_named(
+        code: str, section: str, kind: str, name: str, target: str, design: str | None, request: Request
+    ) -> Response | Redirect:
+        existing = db.get(code)
+        if existing is None or existing.kind != kind:
+            return _error(404, t("errors.not_found"))
+        slug = named_slug(section, name)
+        if isinstance(slug, JSONResponse):
+            return slug
+        try:
+            updated = db.update(code, slug, name, target, design)
+        except SlugTakenError:
+            return name_taken()
+        if updated is None:
+            return _error(404, t("errors.not_found"))
+        logger.info("updated %s id=%s slug=%s", kind, updated.code, updated.slug)
+        record("update", request, redirect=updated)
+        return updated
+
+    def delete_named(code: str, kind: str, request: Request) -> Response:
+        existing = db.get(code)
+        if existing is None or existing.kind != kind:
+            return _error(404, t("errors.not_found"))
+        return delete_redirect(code, request)
+
+    def list_of(kind: str, request: Request) -> RedirectList:
+        redirects = [out(r, request) for r in db.list_all() if r.kind == kind]
+        return RedirectList(base_url=base_url(request), redirects=redirects)
+
+    @app.get("/api/nanourls")
+    def list_nanos(request: Request) -> RedirectList:
+        if source_of(request) == "api":
+            record("read", request, path=_route_path(request))
+        return list_of("nano", request)
+
+    @app.post("/api/nanourls", status_code=201, response_model=RedirectOut, responses={409: {"model": ErrorOut}})
+    def create_nano(body: NanoIn, request: Request) -> Response | RedirectOut:
+        created = create_named(NANO_SECTION, "nano", body.name, body.target, None, request)
+        return out(created, request) if isinstance(created, Redirect) else created
+
+    @app.put("/api/nanourls/{redirect_id}", response_model=RedirectOut, responses={404: {"model": ErrorOut}})
+    def update_nano(redirect_id: str, body: NanoIn, request: Request) -> Response | RedirectOut:
+        updated = update_named(redirect_id, NANO_SECTION, "nano", body.name, body.target, None, request)
+        return out(updated, request) if isinstance(updated, Redirect) else updated
+
+    @app.delete("/api/nanourls/{redirect_id}", status_code=204, responses={404: {"model": ErrorOut}})
+    def delete_nano(redirect_id: str, request: Request) -> Response:
+        return delete_named(redirect_id, "nano", request)
 
     @app.get("/api/logs")
     def get_logs(

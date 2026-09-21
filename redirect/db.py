@@ -54,10 +54,16 @@ MIGRATIONS: tuple[str, ...] = (
     );
     CREATE INDEX events_at ON events (at)
     """,
+    # What a redirect is: a link typed by hand, a NanoURL or a QR code (their paths come from their names),
+    # and for a QR code, its design as JSON
+    """
+    ALTER TABLE redirects ADD COLUMN kind TEXT NOT NULL DEFAULT 'link';
+    ALTER TABLE redirects ADD COLUMN design TEXT
+    """,
 )
 
 BUSY_TIMEOUT_SECONDS = 5.0
-_COLUMNS = "code, slug, name, target, created_at, updated_at"
+_COLUMNS = "code, slug, name, target, created_at, updated_at, kind, design"
 # Short ids: 8 characters without the ones people confuse (0 O o, 1 l I), about 10^14 possibilities
 CODE_ALPHABET = "23456789abcdefghijkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ"
 CODE_LENGTH = 8
@@ -98,6 +104,10 @@ class Redirect:
     target: str
     created_at: str
     updated_at: str
+    # link, nano or qrcode
+    kind: str = "link"
+    # A QR code's design, as JSON
+    design: str | None = None
 
 
 def new_code() -> str:
@@ -120,6 +130,8 @@ def _row(row: sqlite3.Row) -> Redirect:
         target=row["target"],
         created_at=row["created_at"],
         updated_at=row["updated_at"],
+        kind=row["kind"],
+        design=row["design"],
     )
 
 
@@ -195,16 +207,16 @@ class Database:
             row = conn.execute("SELECT target FROM redirects WHERE slug = ?", (slug,)).fetchone()
         return str(row["target"]) if row else None
 
-    def create(self, slug: str, name: str, target: str) -> Redirect:
+    def create(self, slug: str, name: str, target: str, kind: str = "link", design: str | None = None) -> Redirect:
         now = timestamp(self.clock())
         for _ in range(CODE_ATTEMPTS):
             code = self.make_code()
             try:
                 with self._connect() as conn:
                     conn.execute(
-                        "INSERT INTO redirects (code, slug, name, target, created_at, updated_at)"
-                        " VALUES (?, ?, ?, ?, ?, ?)",
-                        (code, slug, name, target, now, now),
+                        "INSERT INTO redirects (code, slug, name, target, created_at, updated_at, kind, design)"
+                        " VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                        (code, slug, name, target, now, now, kind, design),
                     )
             except sqlite3.IntegrityError as exc:
                 if _is_slug_conflict(exc):
@@ -212,17 +224,18 @@ class Database:
                 if "redirects.code" in str(exc):
                     continue  # that id is taken: draw another one
                 raise
-            return Redirect(code, slug, name, target, now, now)
+            return Redirect(code, slug, name, target, now, now, kind, design)
         raise DatabaseError(f"no free id after {CODE_ATTEMPTS} attempts")
 
-    def update(self, code: str, slug: str, name: str, target: str) -> Redirect | None:
+    def update(self, code: str, slug: str, name: str, target: str, design: str | None = None) -> Redirect | None:
+        """Changes a redirect; `design` replaces the stored one (None for anything but a QR code)."""
         now = timestamp(self.clock())
         try:
             with self._connect() as conn:
                 rows = conn.execute(
-                    "UPDATE redirects SET slug = ?, name = ?, target = ?, updated_at = ? WHERE code = ?"
+                    "UPDATE redirects SET slug = ?, name = ?, target = ?, design = ?, updated_at = ? WHERE code = ?"
                     f" RETURNING {_COLUMNS}",
-                    (slug, name, target, now, code),
+                    (slug, name, target, design, now, code),
                 ).fetchall()
         except sqlite3.IntegrityError as exc:
             if _is_slug_conflict(exc):

@@ -25,7 +25,7 @@ START_TIMEOUT=120
 cleanup() {
   local status=$?
   if [ "$status" -ne 0 ]; then
-    for name in "$RUN_ID-a" "$RUN_ID-b" "$RUN_ID-c" "$RUN_ID-d" "$RUN_ID-e" "$RUN_ID-f" "$RUN_ID-g"; do
+    for name in "$RUN_ID-a" "$RUN_ID-b" "$RUN_ID-c" "$RUN_ID-d" "$RUN_ID-e" "$RUN_ID-f" "$RUN_ID-g" "$RUN_ID-h"; do
       if docker container inspect "$name" >/dev/null 2>&1; then
         echo "--- logs of $name"
         docker logs --tail 50 "$name" 2>&1 || true
@@ -33,7 +33,8 @@ cleanup() {
     done
   fi
   docker rm --force "$RUN_ID-a" "$RUN_ID-b" "$RUN_ID-c" "$RUN_ID-d" "$RUN_ID-e" "$RUN_ID-f" "$RUN_ID-g" \
-    >/dev/null 2>&1 || true
+    "$RUN_ID-h" >/dev/null 2>&1 || true
+  docker volume rm --force "$VOLUME-headless" >/dev/null 2>&1 || true
   docker network rm "$RUN_ID-net" >/dev/null 2>&1 || true
   docker volume rm --force "$VOLUME" >/dev/null 2>&1 || true
   rm -rf "$WORK"
@@ -78,7 +79,7 @@ start() { # NAME [docker run options]
   local name="$1" waited=0
   shift
   docker run --detach --name "$name" --platform "$PLATFORM" --read-only --cap-drop ALL \
-    --security-opt no-new-privileges --publish "127.0.0.1::${CONTAINER_PORT:-80}" --volume "$VOLUME:/data" \
+    --security-opt no-new-privileges --publish "127.0.0.1::${CONTAINER_PORT:-80}" --volume "${RUN_VOLUME:-$VOLUME}:/data" \
     "$@" "$IMAGE" >/dev/null
   until [ "$(state "$name")" = "running healthy" ]; do
     case "$(state "$name")" in
@@ -251,6 +252,24 @@ check "PUT /api/settings (hostname off)" "$(request --request PUT --header 'Cont
   --data "$settings" "$BASE/api/settings")" 200
 check "no mDNS answer once turned off" "$(resolve)" nothing
 stop "$RUN_ID-g"
+
+# --- HEADLESS on a new volume: the first key is in the logs, a command replaces it while running ----------------
+RUN_VOLUME="$VOLUME-headless" start "$RUN_ID-h" --env HEADLESS=true
+key="$(docker logs "$RUN_ID-h" 2>&1 | sed -n 's/.*shown this once: \(rdk_[^ ]*\).*/\1/p')"
+contains "HEADLESS prints its first key" "$key" "rdk_"
+check "GET / without the interface" "$(request "$BASE/")" 404
+check "POST /api/login without the interface" "$(request --request POST --header 'Content-Type: application/json' \
+  --data '{"password": "x"}' "$BASE/api/login")" 404
+check "GET /api/list without the key" "$(request "$BASE/api/list")" 401
+body="{\"slug\": \"headless\", \"name\": \"Headless\", \"target\": \"$TARGET\"}"
+check "POST /api/redirects with the printed key" "$(request --request POST --header "Authorization: Bearer $key" \
+  --header 'Content-Type: application/json' --data "$body" "$BASE/api/redirects")" 201
+check "GET /redirect/headless" "$(request "$BASE/redirect/headless")" 302
+new_key="$(docker exec "$RUN_ID-h" python -m redirect api-key)"
+contains "python -m redirect api-key prints a key" "$new_key" "rdk_"
+check "the new key, without a restart" "$(request --header "Authorization: Bearer $new_key" "$BASE/api/list")" 200
+check "the old key, refused" "$(request --header "Authorization: Bearer $key" "$BASE/api/list")" 401
+stop "$RUN_ID-h"
 
 # --- Third run: a user that cannot write to /data must get a clear error, not a crash loop ----------------------
 docker run --detach --name "$RUN_ID-c" --platform "$PLATFORM" --read-only --user 12345:12345 \

@@ -89,6 +89,7 @@ SHOTS = (
     "40-qr-contrast",
     "41-denied",
     "42-access-off",
+    "43-headless",
 )
 
 # Web fonts each kind of page must have loaded (and so rendered with) when captured
@@ -148,6 +149,7 @@ def app_server(
     public_base_url: str | None = None,
     api_enabled: bool | None = None,
     local_only: bool | None = None,
+    headless: bool = False,
 ) -> Iterator[str]:
     """The real app, in this process, on a free port. Backend clock frozen at the golden time, fixed API keys,
     and an mDNS announcer that stays off the network."""
@@ -158,6 +160,7 @@ def app_server(
         admin_password=password,
         api_enabled=api_enabled,
         local_only=local_only,
+        headless=headless,
     )
     bodies = itertools.cycle(KEY_BODIES)
     ids = (f"New{number:05d}" for number in itertools.count(1))
@@ -1426,6 +1429,27 @@ def qr_walk(run: Scenario, data_dir: Path) -> None:
         page.context.close()
 
 
+def headless_walk(run: Scenario, data_dir: Path) -> None:
+    """HEADLESS: the page says the interface is off; the API answers the key printed at startup."""
+    shutil.copyfile(FIXTURE_DB, data_dir / "redirect.db")
+    with app_server(data_dir, headless=True) as base:
+        page = run.open(base)
+        with run.watch.http_error(page, base + "/", 404):
+            response = page.goto(base + "/")
+        assert response is not None and response.status == 404
+        expect(page).to_have_title("Interface turned off")
+        expect(page.locator(".standalone p")).to_have_text(
+            "This Redirect runs without its interface (HEADLESS is set): its redirects are managed through the API."
+        )
+        expect(page.get_by_role("link")).to_have_count(0)
+        run.shot(page, "43-headless", full_page=False, fonts=INTER)
+        # The first key is the first of KEY_BODIES; the links keep working
+        headers = {"Authorization": f"Bearer {FIRST_KEY}"}
+        assert page.request.get(base + "/api/list", headers=headers).status == 200
+        assert page.request.get(base + "/redirect/wiki", max_redirects=0).status == 302
+        page.context.close()
+
+
 def open_mode(run: Scenario, data_dir: Path) -> None:
     """No admin password: no login, and a red warning that stays on screen."""
     shutil.copyfile(FIXTURE_DB, data_dir / "redirect.db")
@@ -1470,6 +1494,7 @@ def main(out_dir: Path) -> int:
                     logs_walk,
                     nano_walk,
                     qr_walk,
+                    headless_walk,
                     open_mode,
                 ):
                     with tempfile.TemporaryDirectory() as data:

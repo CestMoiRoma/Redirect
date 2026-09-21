@@ -320,6 +320,16 @@ def _unauthorized(message: str) -> JSONResponse:
     return response
 
 
+def issue_api_key(db: Database, clock: Clock, new_key: Callable[[], str]) -> NewApiKeyOut:
+    """A new API key, stored as its hash (the old one stops working): the only time the key itself exists."""
+    key = API_KEY_PREFIX + new_key()
+    hint = key[:API_KEY_HINT_LENGTH]
+    created_at = timestamp(clock())
+    db.set_settings({API_KEY_HASH: hash_api_key(key), API_KEY_HINT: hint, API_KEY_CREATED_AT: created_at})
+    logger.info("API key regenerated, it starts with %s", hint)
+    return NewApiKeyOut(key=key, hint=hint, created_at=created_at)
+
+
 class _State:
     """Loaded at startup, then kept in memory: read on every request without a database round trip."""
 
@@ -407,6 +417,13 @@ def create_app(
         auth.hostname_enabled = db.setting(HOSTNAME_ENABLED) != "0"
         auth.api_enabled = db.setting(API_ENABLED) == "1"
         auth.local_only = db.setting(LOCAL_ONLY) != "0"
+        if settings.headless:
+            if auth.api_key_hash is None:
+                # Without an interface, the logs are the only place to hand the first key over
+                issued = issue_api_key(db, clock, new_key)
+                auth.api_key_hash = db.setting(API_KEY_HASH)
+                logger.warning("HEADLESS: API key created, shown this once: %s", issued.key)
+            logger.info("HEADLESS: no interface; manage the redirects through the API, with the API key")
         purge_log()
         # In a thread: announcing probes the network for about a second
         auth.mdns = await asyncio.to_thread(mdns.announce, announced_name())
@@ -438,6 +455,8 @@ def create_app(
         return settings.local_only if settings.local_only is not None else auth.local_only
 
     def api_enabled() -> bool:
+        if settings.headless:
+            return True
         return settings.api_enabled if settings.api_enabled is not None else auth.api_enabled
 
     def logged_in(request: Request) -> bool:
@@ -450,19 +469,33 @@ def create_app(
     async def require_login(request: Request, call_next: Callable[[Request], Awaitable[Response]]) -> Response:
         """With a password, the redirects API needs the admin session or the API key; the key API, the session."""
         path = _route_path(request)
-        if password is None or logged_in(request):
+        # Headless, the API key is the only way in, password or not
+        if (password is None and not settings.headless) or logged_in(request):
             return await call_next(request)
         if path in SESSION_ONLY:
             return _unauthorized(t("errors.session_required"))
         if _is_redirects_api(path):
             key = bearer_token(request.headers.get("authorization", ""))
             if key is None:
-                return _unauthorized(t("errors.login_required"))
+                return _unauthorized(t("errors.key_required") if settings.headless else t("errors.login_required"))
             if not api_enabled():
                 return _error(403, t("errors.api_disabled"))
             if not api_key_matches(key, auth.api_key_hash):
-                return _unauthorized(t("errors.api_key_invalid"))
+                # A key issued by `python -m redirect api-key` while running: read the stored one again
+                auth.api_key_hash = db.setting(API_KEY_HASH)
+                if not api_key_matches(key, auth.api_key_hash):
+                    return _unauthorized(t("errors.api_key_invalid"))
         return await call_next(request)
+
+    @app.middleware("http")
+    async def headless(request: Request, call_next: Callable[[Request], Awaitable[Response]]) -> Response:
+        """HEADLESS: the interface and its routes are gone; the links and the API (with the key) remain."""
+        path = _route_path(request)
+        if not settings.headless or _is_public_path(path) or (_is_redirects_api(path) and path != f"{QR_API}/preview"):
+            return await call_next(request)
+        if path.startswith("/api/"):
+            return _error(404, t("errors.headless"))
+        return HTMLResponse(render_page(t("headless.title"), t("headless.text"), link=False), status_code=404)
 
     @app.middleware("http")
     async def only_local(request: Request, call_next: Callable[[Request], Awaitable[Response]]) -> Response:
@@ -616,16 +649,11 @@ def create_app(
             return disabled
         if not api_enabled():
             return _error(409, t("errors.api_disabled_key"))
-        key = API_KEY_PREFIX + new_key()
-        hint = key[:API_KEY_HINT_LENGTH]
-        created_at = timestamp(clock())
-        key_hash = hash_api_key(key)
-        db.set_settings({API_KEY_HASH: key_hash, API_KEY_HINT: hint, API_KEY_CREATED_AT: created_at})
-        auth.api_key_hash = key_hash
-        logger.info("API key regenerated, it starts with %s", hint)
+        issued = issue_api_key(db, clock, new_key)
+        auth.api_key_hash = hash_api_key(issued.key)
         # The only response that ever carries the key: no cache may keep it
         response.headers["Cache-Control"] = "no-store"
-        return NewApiKeyOut(key=key, hint=hint, created_at=created_at)
+        return issued
 
     def settings_out() -> SettingsOut:
         return SettingsOut(

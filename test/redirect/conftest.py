@@ -31,6 +31,7 @@ def make_client(tmp_path: Path, clock: FrozenClock) -> Iterator[Callable[..., Te
         new_key: Callable[[], str] | None = None,
         api_enabled: bool | None = None,
         local_only: bool | None = None,
+        headless: bool = False,
         port: int = 80,
         **client_options: object,
     ) -> TestClient:
@@ -41,6 +42,7 @@ def make_client(tmp_path: Path, clock: FrozenClock) -> Iterator[Callable[..., Te
             admin_password=admin_password,
             api_enabled=api_enabled,
             local_only=local_only,
+            headless=headless,
         )
         announcer = FakeAnnouncer()
         # Predictable ids, in creation order, shared by every app of the test (they use the same database)

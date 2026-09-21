@@ -13,6 +13,8 @@
     highlightId: null, // the entry just created or saved
     editing: null,
     deleting: null,
+    loginRequired: false,
+    keyExists: false,
   }
 
   const $ = (selector, root = document) => root.querySelector(selector)
@@ -55,6 +57,8 @@
     } catch {
       throw new ApiError(0, t('status.network'))
     }
+    // The session is gone (expired, logged out elsewhere, new password): back to the login screen
+    if (response.status === 401 && path !== '/api/login') showLogin()
     if (response.status === 204) return null
     let data = null
     try {
@@ -251,6 +255,7 @@
       await action()
     } catch (error) {
       if (!(error instanceof ApiError)) throw error
+      if (error.status === 401) return // the login screen has replaced the page
       if (error.status === 404) {
         // The entry was deleted elsewhere: close, refresh, tell, and keep the keyboard in the list
         form.closest('dialog')?.close()
@@ -340,7 +345,7 @@
         setStatus(t('status.deleted', { name: redirect.name }))
       } catch (error) {
         if (!(error instanceof ApiError)) throw error
-        setStatus(error.message, true)
+        if (error.status !== 401) setStatus(error.message, true)
       } finally {
         confirm.disabled = false
         state.deleting = null
@@ -362,6 +367,150 @@
     $('#delete-name').textContent = redirect.name
     $('#delete-text').textContent = t('delete.text', { url: redirect.public_url })
     $('#delete-dialog').showModal()
+  }
+
+  // --- Login ------------------------------------------------------------------------------------------
+
+  function showLogin() {
+    document.querySelectorAll('dialog[open]').forEach((dialog) => dialog.close())
+    $('#main').hidden = true
+    $('#logout').hidden = true
+    $('#open-warning').hidden = true
+    $('#load-error').hidden = true
+    const form = $('#login-form')
+    form.reset()
+    setLoginError(null)
+    $('#login-view').hidden = false
+    form.elements.password.focus()
+  }
+
+  function setLoginError(message) {
+    const input = $('#login-password')
+    const slot = $('#login-password-error')
+    slot.textContent = message || ''
+    slot.hidden = !message
+    if (message) input.setAttribute('aria-invalid', 'true')
+    else input.removeAttribute('aria-invalid')
+  }
+
+  function setupLogin() {
+    const form = $('#login-form')
+    form.addEventListener('submit', async (event) => {
+      event.preventDefault()
+      const submit = $('[type="submit"]', form)
+      submit.disabled = true
+      setLoginError(null)
+      try {
+        await api('POST', '/api/login', { password: form.elements.password.value })
+        form.reset()
+        await showApp()
+      } catch (error) {
+        if (!(error instanceof ApiError)) throw error
+        setLoginError(error.message)
+        form.elements.password.select()
+      } finally {
+        submit.disabled = false
+        if (document.activeElement === document.body) form.elements.password.focus()
+      }
+    })
+    $('#logout').addEventListener('click', async () => {
+      await api('POST', '/api/logout').catch(() => {})
+      showLogin()
+    })
+  }
+
+  // --- API key ----------------------------------------------------------------------------------------
+
+  function renderKey(info) {
+    state.keyExists = info.exists
+    $('#key-state').textContent = info.exists
+      ? t('key.set', { date: info.created_at.slice(0, 10), hint: info.hint })
+      : t('key.none')
+    $('#key-generate').textContent = info.exists ? t('key.regenerate') : t('key.generate')
+  }
+
+  async function generateKey() {
+    const button = $('#key-generate')
+    button.disabled = true
+    clearStatus()
+    try {
+      const created = await api('POST', '/api/key')
+      renderKey({ exists: true, hint: created.hint, created_at: created.created_at })
+      const value = $('#key-new-value')
+      value.value = created.key
+      $('#key-new-dialog').showModal()
+      value.focus()
+      value.select()
+    } catch (error) {
+      if (!(error instanceof ApiError)) throw error
+      if (error.status !== 401) setStatus(error.message, true)
+    } finally {
+      button.disabled = false
+    }
+  }
+
+  function setupKey() {
+    $('#key-generate').addEventListener('click', () => {
+      if (state.keyExists) $('#key-confirm-dialog').showModal()
+      else generateKey()
+    })
+    $('#key-confirm').addEventListener('click', () => {
+      $('#key-confirm-dialog').close()
+      generateKey()
+    })
+    $('#key-new-copy').addEventListener('click', async (event) => {
+      const button = event.currentTarget
+      const copied = await copyText($('#key-new-value').value)
+      button.focus()
+      button.textContent = copied ? t('list.copied') : t('list.copy.failed')
+      button.classList.toggle('is-copied', copied)
+      button.classList.toggle('is-failed', !copied)
+    })
+    $('#key-new-dialog').addEventListener('close', () => {
+      // The key is shown once: it does not stay in the page after the dialog
+      $('#key-new-value').value = ''
+      const copy = $('#key-new-copy')
+      copy.textContent = t('key.new.copy')
+      copy.classList.remove('is-copied', 'is-failed')
+      if (!$('#key-card').hidden) $('#key-generate').focus()
+    })
+  }
+
+  // --- Start ------------------------------------------------------------------------------------------
+
+  function showLoadError() {
+    $('#main').hidden = true
+    const loadError = $('#load-error')
+    loadError.textContent = t('status.load_failed')
+    loadError.hidden = false
+  }
+
+  async function showApp() {
+    $('#login-view').hidden = true
+    $('#open-warning').hidden = state.loginRequired
+    $('#logout').hidden = !state.loginRequired
+    $('#key-card').hidden = !state.loginRequired
+    try {
+      await reload()
+      if (state.loginRequired) renderKey(await api('GET', '/api/key'))
+      $('#main').hidden = false
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 401) return // the login screen is shown
+      showLoadError()
+    }
+  }
+
+  async function start() {
+    let auth
+    try {
+      auth = await api('GET', '/api/auth')
+    } catch {
+      showLoadError()
+      return
+    }
+    state.loginRequired = auth.login_required
+    if (auth.login_required && !auth.logged_in) showLogin()
+    else await showApp()
   }
 
   // --- Wiring -----------------------------------------------------------------------------------------
@@ -395,14 +544,9 @@
     setupCreate()
     setupEdit()
     setupDelete()
-    try {
-      await reload()
-      $('#main').hidden = false
-    } catch {
-      const loadError = $('#load-error')
-      loadError.textContent = t('status.load_failed')
-      loadError.hidden = false
-    }
+    setupLogin()
+    setupKey()
+    await start()
   }
 
   init()

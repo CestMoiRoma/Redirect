@@ -7,6 +7,7 @@ or missing element. Every capture goes through golden.py.
 """
 
 import html
+import itertools
 import shutil
 import socket
 import sys
@@ -62,6 +63,13 @@ SHOTS = (
     "19-target",
     "20-create-error",
     "21-edit-gone",
+    "22-login",
+    "23-login-error",
+    "24-key-none",
+    "25-key-new",
+    "26-key-regenerate",
+    "27-key-set",
+    "28-open-mode",
 )
 
 # Web fonts each kind of page must have loaded (and so rendered with) when captured
@@ -75,6 +83,12 @@ FIXTURE_ROWS = (
     ("Redirect api", "local-api/Test1", "http://10.12.75.1/api/test1"),
     ("Team wiki", "wiki", "http://wiki.intranet.local/start"),
 )
+
+# The scenario runs with an admin password, as a real deployment should; 28-open-mode runs without
+ADMIN_PASSWORD = "correct horse battery"
+# API keys are random in the app; the scenario injects these, in this order, so the captures are stable
+KEY_BODIES = ("K1kE9rT3xQ7mW2vN8pL4sD6fH0jB5cY1uZ3aG7eR9tX", "M4nP8qS2wV6yB0dF3hJ7kL1oR5tU9xA2cE6gI0mQ4sW")
+FIRST_KEY, SECOND_KEY = (f"rdk_{body}" for body in KEY_BODIES)
 
 SLUG_INVALID = "Use only letters, digits, dots, dashes and underscores, with / between segments."
 TARGET_INVALID = "Enter a full URL that starts with http:// or https://."
@@ -106,10 +120,13 @@ TARGET_PAGE = """<!doctype html>
 
 
 @contextmanager
-def app_server(data_dir: Path) -> Iterator[str]:
-    """The real app, in this process, on a free port. Backend clock frozen at the golden time."""
-    settings = Settings(data_dir=data_dir, public_base_url=PUBLIC_BASE_URL, log_level="WARNING")
-    app = create_app(settings, clock=lambda: golden.GOLDEN_TIME)
+def app_server(data_dir: Path, password: str | None = ADMIN_PASSWORD) -> Iterator[str]:
+    """The real app, in this process, on a free port. Backend clock frozen at the golden time, fixed API keys."""
+    settings = Settings(
+        data_dir=data_dir, public_base_url=PUBLIC_BASE_URL, log_level="WARNING", admin_password=password
+    )
+    bodies = itertools.cycle(KEY_BODIES)
+    app = create_app(settings, clock=lambda: golden.GOLDEN_TIME, new_key=lambda: next(bodies))
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     sock.bind(("127.0.0.1", 0))
     port = sock.getsockname()[1]
@@ -290,6 +307,18 @@ def expect_header(page: Page) -> None:
     expect(page.locator(".tagline")).to_have_text("Fixed links that point wherever you need them to.")
 
 
+def log_in(page: Page) -> None:
+    """From the login screen to the app, with the right password."""
+    view = page.locator("#login-view")
+    expect(view).to_be_visible()
+    view.get_by_label("Password").fill(ADMIN_PASSWORD)
+    view.get_by_role("button", name="Log in").click()
+    expect(page.locator("#main")).to_be_visible()
+    expect(view).to_be_hidden()
+    expect(page.get_by_role("button", name="Log out")).to_be_visible()
+    expect(page.locator("#open-warning")).to_be_hidden()
+
+
 def expect_create_form(page: Page) -> None:
     create = page.locator("#create")
     expect(create.get_by_role("heading", level=2)).to_have_text("New redirect")
@@ -342,6 +371,7 @@ def empty_list(run: Scenario, data_dir: Path) -> None:
     with app_server(data_dir) as base:
         page = run.open(base)
         page.goto(base + "/")
+        log_in(page)
         expect_header(page)
         expect(page.locator("#main")).to_be_visible()
         expect(page.get_by_role("heading", level=2, name="Redirects")).to_be_visible()
@@ -364,6 +394,7 @@ def main_walk(run: Scenario, data_dir: Path) -> None:
 
         # --- The list
         page.goto(base + "/")
+        log_in(page)
         expect_header(page)
         expect(page.locator("#count")).to_have_text("3 redirects")
         expect(page.locator("#filter")).to_have_attribute("placeholder", "Filter by name, path or target")
@@ -579,6 +610,9 @@ def main_walk(run: Scenario, data_dir: Path) -> None:
         # --- Copy over plain http (a LAN address): no Clipboard API, the execCommand fallback copies
         lan = page.context.new_page()
         lan.goto(PUBLIC_BASE_URL + "/")
+        # No login here: the router answers for the public host with route.fetch, whose requests to the real
+        # app carry this context's session cookie
+        expect(lan.locator("#main")).to_be_visible()
         assert lan.evaluate("() => window.isSecureContext") is False
         lan_copy = lan.locator("#list .item").nth(2).get_by_role("button", name="Copy link: Team wiki")
         lan_copy.click()
@@ -746,6 +780,153 @@ def main_walk(run: Scenario, data_dir: Path) -> None:
         page.context.close()
 
 
+def auth_walk(run: Scenario, data_dir: Path) -> None:
+    """Login, the API key (generate, copy, use, regenerate), logout, a session lost while working."""
+    shutil.copyfile(FIXTURE_DB, data_dir / "redirect.db")
+    with app_server(data_dir) as base:
+        page = run.open(base)
+        view = page.locator("#login-view")
+        password = view.get_by_label("Password")
+        log_in_button = view.get_by_role("button", name="Log in")
+
+        # --- The login screen, then a wrong password
+        page.goto(base + "/")
+        expect_header(page)
+        expect(view).to_be_visible()
+        expect(page.locator("#main")).to_be_hidden()
+        expect(page.locator("#logout")).to_be_hidden()
+        expect(page.locator("#open-warning")).to_be_hidden()
+        expect(view.get_by_role("heading", level=2)).to_have_text("Log in")
+        expect(view.locator(".hint")).to_have_text("Enter the admin password to manage the redirects.")
+        expect(password).to_have_attribute("type", "password")
+        expect(password).to_have_attribute("autocomplete", "current-password")
+        expect(password).to_be_focused()
+        run.shot(page, "22-login", fonts=INTER)
+
+        password.fill("wrong password")
+        with run.watch.http_error(page, base + "/api/login", 401):
+            log_in_button.click()
+            expect(view.locator("#login-password-error")).to_have_text("Wrong password.")
+        expect(password).to_have_attribute("aria-invalid", "true")
+        expect(password).to_be_focused()
+        expect(page.locator("#main")).to_be_hidden()
+        run.shot(page, "23-login-error", fonts=INTER)
+
+        password.fill(ADMIN_PASSWORD)
+        log_in_button.click()
+        expect(page.locator("#main")).to_be_visible()
+        expect(view).to_be_hidden()
+        expect_rows(page, FIXTURE_ROWS)
+
+        # --- No key yet
+        card = page.locator("#key-card")
+        state = card.locator("#key-state")
+        expect(card.get_by_role("heading", level=2)).to_have_text("API key")
+        expect(card.locator(".hint")).to_have_text(
+            "Scripts send it as Authorization: Bearer <key> to /api/redirects, to create, change or delete redirects."
+        )
+        expect(state).to_have_text("No API key yet.")
+        run.shot(page, "24-key-none")
+
+        # --- Generate: the key is shown once, copied, then gone from the page
+        card.get_by_role("button", name="Generate a key").click()
+        new_dialog = page.locator("#key-new-dialog")
+        expect(new_dialog).to_be_visible()
+        expect(new_dialog.get_by_role("heading", level=2)).to_have_text("Your new API key")
+        expect(new_dialog.locator("#key-new-text")).to_have_text(
+            "Copy it now: it is not stored and will not be shown again."
+        )
+        value = new_dialog.get_by_label("API key")
+        expect(value).to_have_value(FIRST_KEY)
+        expect(value).to_be_focused()
+        expect(new_dialog.get_by_role("button", name="Copy key")).to_be_visible()
+        copy_key = new_dialog.locator("#key-new-copy")  # by id: its name changes to "Copied"
+        copy_key.click()
+        expect(copy_key).to_have_text("Copied")
+        assert page.evaluate("() => navigator.clipboard.readText()") == FIRST_KEY
+        run.shot(page, "25-key-new", full_page=False)
+        new_dialog.get_by_role("button", name="Done").click()
+        expect(new_dialog).to_be_hidden()
+        expect(value).to_have_value("")
+        regenerate = card.get_by_role("button", name="Regenerate the key")
+        expect(regenerate).to_be_focused()
+        expect(state).to_have_text("Created on 2026-01-15. It starts with rdk_K1kE…")
+
+        # A script with the key and no session: the key opens the redirects API, nothing else does
+        script = run.browser.new_context()
+        api = base + "/api/redirects"
+        assert script.request.get(api, headers={"Authorization": f"Bearer {FIRST_KEY}"}).status == 200
+        assert script.request.get(api).status == 401
+
+        # --- Regenerate: confirm first, keep the key once, then replace it
+        confirm = page.locator("#key-confirm-dialog")
+        regenerate.click()
+        expect(confirm).to_be_visible()
+        expect(confirm.get_by_role("heading", level=2)).to_have_text("Regenerate the API key?")
+        expect(confirm.locator("#key-confirm-text")).to_have_text(
+            "The current key stops working at once, for every script that uses it."
+        )
+        expect(confirm.get_by_role("button")).to_have_text(["Keep the current key", "Regenerate"])
+        expect(confirm.get_by_role("button", name="Keep the current key")).to_be_focused()
+        run.shot(page, "26-key-regenerate", full_page=False)
+        confirm.get_by_role("button", name="Keep the current key").click()
+        expect(confirm).to_be_hidden()
+        expect(state).to_have_text("Created on 2026-01-15. It starts with rdk_K1kE…")
+        regenerate.click()
+        confirm.get_by_role("button", name="Regenerate").click()
+        expect(value).to_have_value(SECOND_KEY)
+        new_dialog.get_by_role("button", name="Done").click()
+        expect(state).to_have_text("Created on 2026-01-15. It starts with rdk_M4nP…")
+        assert script.request.get(api, headers={"Authorization": f"Bearer {FIRST_KEY}"}).status == 401
+        assert script.request.get(api, headers={"Authorization": f"Bearer {SECOND_KEY}"}).status == 200
+        script.close()
+        run.shot(page, "27-key-set")
+
+        # --- Log out: back to the login screen, for good
+        page.get_by_role("button", name="Log out").click()
+        expect(view).to_be_visible()
+        expect(page.locator("#main")).to_be_hidden()
+        expect(password).to_be_focused()
+        page.reload()
+        expect(view).to_be_visible()
+
+        # --- The session is lost while working (expired, new password): the next action shows the login screen
+        log_in(page)
+        page.context.clear_cookies()
+        form = page.locator("#create-form")
+        form.get_by_label("Path").fill("docs")
+        form.get_by_label("Name").fill("Docs")
+        form.get_by_label("Target URL").fill("http://docs.intranet.local/")
+        with run.watch.http_error(page, api, 401):
+            form.get_by_role("button", name="Create redirect").click()
+            expect(view).to_be_visible()
+        expect(page.locator("#main")).to_be_hidden()
+        log_in(page)
+        expect_rows(page, FIXTURE_ROWS)
+        page.context.close()
+
+
+def open_mode(run: Scenario, data_dir: Path) -> None:
+    """No admin password: no login, and a red warning that stays on screen."""
+    shutil.copyfile(FIXTURE_DB, data_dir / "redirect.db")
+    with app_server(data_dir, password=None) as base:
+        page = run.open(base)
+        page.goto(base + "/")
+        expect(page.locator("#main")).to_be_visible()
+        expect(page.locator("#login-view")).to_be_hidden()
+        warning = page.locator("#open-warning p")
+        expect(warning).to_have_text(
+            "No admin password is set: anyone who can reach this page can change or delete every redirect."
+            " Set ADMIN_PASSWORD in the container's environment to require a login."
+        )
+        expect(warning).to_have_attribute("role", "alert")
+        expect(page.locator("#logout")).to_be_hidden()
+        expect(page.locator("#key-card")).to_be_hidden()
+        expect_rows(page, FIXTURE_ROWS)
+        run.shot(page, "28-open-mode")
+        page.context.close()
+
+
 def main(out_dir: Path) -> int:
     out_dir.mkdir(parents=True, exist_ok=True)
     expect.set_options(timeout=TIMEOUT_MS)
@@ -761,6 +942,9 @@ def main(out_dir: Path) -> int:
                 with tempfile.TemporaryDirectory() as empty, tempfile.TemporaryDirectory() as seeded:
                     empty_list(run, Path(empty))
                     main_walk(run, Path(seeded))
+                for walk in (auth_walk, open_mode):
+                    with tempfile.TemporaryDirectory() as data:
+                        walk(run, Path(data))
             browser.close()
     except Exception:
         traceback.print_exc()

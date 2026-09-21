@@ -11,11 +11,36 @@
   </head>
   <body>
     <header class="top">
-      <div class="wrap">
-        <h1 class="brand"><span class="brand-mark" aria-hidden="true"></span><span data-i18n="app.title"></span></h1>
-        <p class="tagline" data-i18n="app.tagline"></p>
+      <div class="wrap top-bar">
+        <div>
+          <h1 class="brand"><span class="brand-mark" aria-hidden="true"></span><span data-i18n="app.title"></span></h1>
+          <p class="tagline" data-i18n="app.tagline"></p>
+        </div>
+        <button type="button" class="button" id="logout" data-i18n="app.logout" hidden></button>
       </div>
     </header>
+
+    <!-- Shown when no admin password is set -->
+    <div class="wrap" id="open-warning" hidden>
+      <p class="banner-danger" role="alert" data-i18n="app.open_warning"></p>
+    </div>
+
+    <main class="wrap" id="login-view" hidden>
+      <section class="card login" aria-labelledby="login-title">
+        <h2 id="login-title" data-i18n="login.title"></h2>
+        <p class="hint" data-i18n="login.text"></p>
+        <form id="login-form" class="redirect-form" novalidate>
+          <div class="field">
+            <label for="login-password" data-i18n="login.password.label"></label>
+            <input id="login-password" name="password" type="password" autocomplete="current-password" aria-describedby="login-password-error" />
+            <p class="field-error" id="login-password-error" hidden></p>
+          </div>
+          <div class="form-actions">
+            <button type="submit" class="button primary" data-i18n="login.submit"></button>
+          </div>
+        </form>
+      </section>
+    </main>
 
     <main class="wrap layout" id="main" hidden>
       <section class="list-section" aria-labelledby="list-title">
@@ -35,36 +60,46 @@
         <p id="no-match" class="empty" hidden></p>
       </section>
 
-      <section class="card create" id="create" aria-labelledby="create-title">
-        <h2 id="create-title" data-i18n="form.create.title"></h2>
-        <form id="create-form" class="redirect-form" novalidate>
-          <div class="field field-slug">
-            <label for="create-slug" data-i18n="form.slug.label"></label>
-            <div class="prefixed">
-              <span class="prefix" data-base-url aria-hidden="true"></span>
-              <input id="create-slug" name="slug" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" aria-describedby="create-slug-hint create-slug-error" />
+      <div class="side">
+        <section class="card create" id="create" aria-labelledby="create-title">
+          <h2 id="create-title" data-i18n="form.create.title"></h2>
+          <form id="create-form" class="redirect-form" novalidate>
+            <div class="field field-slug">
+              <label for="create-slug" data-i18n="form.slug.label"></label>
+              <div class="prefixed">
+                <span class="prefix" data-base-url aria-hidden="true"></span>
+                <input id="create-slug" name="slug" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" aria-describedby="create-slug-hint create-slug-error" />
+              </div>
+              <p class="hint" id="create-slug-hint" data-i18n="form.slug.hint"></p>
+              <p class="field-error" id="create-slug-error" hidden></p>
             </div>
-            <p class="hint" id="create-slug-hint" data-i18n="form.slug.hint"></p>
-            <p class="field-error" id="create-slug-error" hidden></p>
-          </div>
-          <div class="field">
-            <label for="create-name" data-i18n="form.name.label"></label>
-            <input id="create-name" name="name" type="text" autocomplete="off" aria-describedby="create-name-hint create-name-error" />
-            <p class="hint" id="create-name-hint" data-i18n="form.name.hint"></p>
-            <p class="field-error" id="create-name-error" hidden></p>
-          </div>
-          <div class="field field-target">
-            <label for="create-target" data-i18n="form.target.label"></label>
-            <input id="create-target" name="target" type="url" inputmode="url" autocomplete="off" spellcheck="false" aria-describedby="create-target-hint create-target-error" />
-            <p class="hint" id="create-target-hint" data-i18n="form.target.hint"></p>
-            <p class="field-error" id="create-target-error" hidden></p>
-          </div>
-          <p class="form-error" role="alert" hidden></p>
-          <div class="form-actions">
-            <button type="submit" class="button primary" data-i18n="form.create.submit"></button>
-          </div>
-        </form>
-      </section>
+            <div class="field">
+              <label for="create-name" data-i18n="form.name.label"></label>
+              <input id="create-name" name="name" type="text" autocomplete="off" aria-describedby="create-name-hint create-name-error" />
+              <p class="hint" id="create-name-hint" data-i18n="form.name.hint"></p>
+              <p class="field-error" id="create-name-error" hidden></p>
+            </div>
+            <div class="field field-target">
+              <label for="create-target" data-i18n="form.target.label"></label>
+              <input id="create-target" name="target" type="url" inputmode="url" autocomplete="off" spellcheck="false" aria-describedby="create-target-hint create-target-error" />
+              <p class="hint" id="create-target-hint" data-i18n="form.target.hint"></p>
+              <p class="field-error" id="create-target-error" hidden></p>
+            </div>
+            <p class="form-error" role="alert" hidden></p>
+            <div class="form-actions">
+              <button type="submit" class="button primary" data-i18n="form.create.submit"></button>
+            </div>
+          </form>
+        </section>
+
+        <!-- Shown when a login is required: the key only means something then -->
+        <section class="card key-card" id="key-card" aria-labelledby="key-title" hidden>
+          <h2 id="key-title" data-i18n="key.title"></h2>
+          <p class="hint" data-i18n="key.help"></p>
+          <p class="key-state" id="key-state"></p>
+          <button type="button" class="button" id="key-generate"></button>
+        </section>
+      </div>
     </main>
 
     <div class="wrap">
@@ -126,6 +161,30 @@
       <div class="form-actions">
         <button type="button" class="button" data-action="close" data-i18n="delete.cancel" autofocus></button>
         <button type="button" class="button danger" id="delete-confirm" data-i18n="delete.confirm"></button>
+      </div>
+    </dialog>
+
+    <dialog id="key-confirm-dialog" class="dialog dialog-small" aria-labelledby="key-confirm-title" aria-describedby="key-confirm-text">
+      <h2 id="key-confirm-title" data-i18n="key.confirm.title"></h2>
+      <p id="key-confirm-text" data-i18n="key.confirm.text"></p>
+      <div class="form-actions">
+        <button type="button" class="button" data-action="close" data-i18n="key.confirm.cancel" autofocus></button>
+        <button type="button" class="button danger" id="key-confirm" data-i18n="key.confirm.submit"></button>
+      </div>
+    </dialog>
+
+    <dialog id="key-new-dialog" class="dialog" aria-labelledby="key-new-title" aria-describedby="key-new-text">
+      <h2 id="key-new-title" data-i18n="key.new.title"></h2>
+      <p id="key-new-text" data-i18n="key.new.text"></p>
+      <div class="field key-new-field">
+        <label for="key-new-value" data-i18n="key.new.label"></label>
+        <div class="key-row">
+          <input id="key-new-value" type="text" readonly spellcheck="false" autocomplete="off" />
+          <button type="button" class="button copy" id="key-new-copy" data-i18n="key.new.copy"></button>
+        </div>
+      </div>
+      <div class="form-actions">
+        <button type="button" class="button primary" data-action="close" data-i18n="key.new.done"></button>
       </div>
     </dialog>
   </body>

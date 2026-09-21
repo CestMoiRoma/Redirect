@@ -149,7 +149,7 @@ def test_interactive_docs_are_disabled(client):
 def test_list_is_empty_on_a_new_database(client):
     response = client.get("/api/redirects")
     assert response.status_code == 200
-    assert response.json() == {"base_url": "http://redirect.lan", "redirects": []}
+    assert response.json() == {"base_url": "http://redirect.lan", "ip_base_url": "http://testserver", "redirects": []}
 
 
 def test_list_uses_the_host_header_without_public_base_url_nor_hostname(client):
@@ -189,6 +189,7 @@ def test_create_returns_the_stored_redirect(public_client):
     assert response.status_code == 201
     assert response.json() == {
         "kind": "link",
+        "link_host": None,
         "id": "id000001",
         **BUDGET,
         "public_url": "http://redirect.local:8080/redirect/compta/budget-2026",
@@ -355,6 +356,7 @@ def test_update_changes_every_field_and_the_update_time(public_client, clock):
     assert response.status_code == 200
     assert response.json() == {
         "kind": "link",
+        "link_host": None,
         "id": created["id"],
         "slug": "compta/2026/budget",
         "name": "Budget 2026",

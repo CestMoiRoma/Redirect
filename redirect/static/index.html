@@ -80,6 +80,13 @@
               <input id="nano-target" name="target" type="url" inputmode="url" autocomplete="off" spellcheck="false" aria-describedby="nano-target-error" />
               <p class="field-error" id="nano-target-error" hidden></p>
             </div>
+            <fieldset class="design link-host">
+              <legend data-i18n="linkhost.legend"></legend>
+              <label class="check"><input type="radio" name="link_host" value="ip" checked /> <span data-i18n="linkhost.ip"></span></label>
+              <p class="hint" data-link-example="ip"></p>
+              <label class="check"><input type="radio" name="link_host" value="hostname" /> <span data-i18n="linkhost.hostname"></span></label>
+              <p class="hint" data-link-example="hostname"></p>
+            </fieldset>
             <p class="form-error" role="alert" hidden></p>
             <div class="form-actions">
               <button type="submit" class="button primary" data-i18n="nano.create.submit"></button>
@@ -118,6 +125,13 @@
               <input id="qr-target" name="target" type="url" inputmode="url" autocomplete="off" spellcheck="false" aria-describedby="qr-target-error" />
               <p class="field-error" id="qr-target-error" hidden></p>
             </div>
+            <fieldset class="design link-host">
+              <legend data-i18n="linkhost.legend"></legend>
+              <label class="check"><input type="radio" name="link_host" value="ip" checked /> <span data-i18n="linkhost.ip"></span></label>
+              <p class="hint" data-link-example="ip"></p>
+              <label class="check"><input type="radio" name="link_host" value="hostname" /> <span data-i18n="linkhost.hostname"></span></label>
+              <p class="hint" data-link-example="hostname"></p>
+            </fieldset>
             <fieldset class="design" id="qr-design" name="design" aria-describedby="qr-design-error">
               <legend data-i18n="qr.design"></legend>
               <div class="design-colors">
@@ -400,6 +414,13 @@
           <input id="nano-edit-target" name="target" type="url" inputmode="url" autocomplete="off" spellcheck="false" aria-describedby="nano-edit-target-error" />
           <p class="field-error" id="nano-edit-target-error" hidden></p>
         </div>
+        <fieldset class="design link-host">
+          <legend data-i18n="linkhost.legend"></legend>
+          <label class="check"><input type="radio" name="link_host" value="ip" checked /> <span data-i18n="linkhost.ip"></span></label>
+          <p class="hint" data-link-example="ip"></p>
+          <label class="check"><input type="radio" name="link_host" value="hostname" /> <span data-i18n="linkhost.hostname"></span></label>
+          <p class="hint" data-link-example="hostname"></p>
+        </fieldset>
         <p class="form-error" role="alert" hidden></p>
         <div class="form-actions">
           <button type="button" class="button" data-action="close" data-i18n="form.cancel"></button>

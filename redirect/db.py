@@ -60,10 +60,15 @@ MIGRATIONS: tuple[str, ...] = (
     ALTER TABLE redirects ADD COLUMN kind TEXT NOT NULL DEFAULT 'link';
     ALTER TABLE redirects ADD COLUMN design TEXT
     """,
+    # How a NanoURL or a QR code writes its link: with Redirect's IP address (works without any DNS) or with
+    # the hostname of the settings
+    """
+    ALTER TABLE redirects ADD COLUMN link_host TEXT NOT NULL DEFAULT 'ip'
+    """,
 )
 
 BUSY_TIMEOUT_SECONDS = 5.0
-_COLUMNS = "code, slug, name, target, created_at, updated_at, kind, design"
+_COLUMNS = "code, slug, name, target, created_at, updated_at, kind, design, link_host"
 # Short ids: 8 characters without the ones people confuse (0 O o, 1 l I), about 10^14 possibilities
 CODE_ALPHABET = "23456789abcdefghijkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ"
 CODE_LENGTH = 8
@@ -108,6 +113,8 @@ class Redirect:
     kind: str = "link"
     # A QR code's design, as JSON
     design: str | None = None
+    # ip or hostname: how a NanoURL or a QR code writes its link
+    link_host: str = "ip"
 
 
 def new_code() -> str:
@@ -132,6 +139,7 @@ def _row(row: sqlite3.Row) -> Redirect:
         updated_at=row["updated_at"],
         kind=row["kind"],
         design=row["design"],
+        link_host=row["link_host"],
     )
 
 
@@ -207,16 +215,25 @@ class Database:
             row = conn.execute("SELECT target FROM redirects WHERE slug = ?", (slug,)).fetchone()
         return str(row["target"]) if row else None
 
-    def create(self, slug: str, name: str, target: str, kind: str = "link", design: str | None = None) -> Redirect:
+    def create(
+        self,
+        slug: str,
+        name: str,
+        target: str,
+        kind: str = "link",
+        design: str | None = None,
+        link_host: str = "ip",
+    ) -> Redirect:
         now = timestamp(self.clock())
         for _ in range(CODE_ATTEMPTS):
             code = self.make_code()
             try:
                 with self._connect() as conn:
                     conn.execute(
-                        "INSERT INTO redirects (code, slug, name, target, created_at, updated_at, kind, design)"
-                        " VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                        (code, slug, name, target, now, now, kind, design),
+                        "INSERT INTO redirects"
+                        " (code, slug, name, target, created_at, updated_at, kind, design, link_host)"
+                        " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                        (code, slug, name, target, now, now, kind, design, link_host),
                     )
             except sqlite3.IntegrityError as exc:
                 if _is_slug_conflict(exc):
@@ -224,18 +241,27 @@ class Database:
                 if "redirects.code" in str(exc):
                     continue  # that id is taken: draw another one
                 raise
-            return Redirect(code, slug, name, target, now, now, kind, design)
+            return Redirect(code, slug, name, target, now, now, kind, design, link_host)
         raise DatabaseError(f"no free id after {CODE_ATTEMPTS} attempts")
 
-    def update(self, code: str, slug: str, name: str, target: str, design: str | None = None) -> Redirect | None:
-        """Changes a redirect; `design` replaces the stored one (None for anything but a QR code)."""
+    def update(
+        self,
+        code: str,
+        slug: str,
+        name: str,
+        target: str,
+        design: str | None = None,
+        link_host: str = "ip",
+    ) -> Redirect | None:
+        """Changes a redirect; `design` and `link_host` replace the stored ones (they only matter to NanoURLs
+        and QR codes)."""
         now = timestamp(self.clock())
         try:
             with self._connect() as conn:
                 rows = conn.execute(
-                    "UPDATE redirects SET slug = ?, name = ?, target = ?, design = ?, updated_at = ? WHERE code = ?"
-                    f" RETURNING {_COLUMNS}",
-                    (slug, name, target, design, now, code),
+                    "UPDATE redirects SET slug = ?, name = ?, target = ?, design = ?, link_host = ?, updated_at = ?"
+                    f" WHERE code = ? RETURNING {_COLUMNS}",
+                    (slug, name, target, design, link_host, now, code),
                 ).fetchall()
         except sqlite3.IntegrityError as exc:
             if _is_slug_conflict(exc):

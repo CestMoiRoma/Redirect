@@ -85,6 +85,12 @@
   "qr.download.aria": "Download SVG: {name}",
   "qr.created": "QR code “{name}” created.",
 
+  "linkhost.legend": "Link address",
+  "linkhost.ip": "IP address",
+  "linkhost.ip.hint": "Works without any DNS: {url}",
+  "linkhost.hostname": "Hostname",
+  "linkhost.hostname.hint": "Needs a DNS entry or mDNS to reach people: {url}",
+
   "nano.title": "NanoURLs",
   "nano.count.one": "1 NanoURL",
   "nano.count.other": "{count} NanoURLs",

@@ -306,6 +306,14 @@ def is_local_address(host: str | None) -> bool:
     return any(address in network for network in LOCAL_NETWORKS if network.version == address.version)
 
 
+def ip_base_url(scheme: str, host: str, port: int) -> str:
+    """http://<address>[:port]: the port only when it is not the scheme's own, IPv6 addresses in brackets."""
+    if ":" in host and not host.startswith("["):
+        host = f"[{host}]"
+    default = 443 if scheme == "https" else 80
+    return f"{scheme}://{host}" + ("" if port == default else f":{port}")
+
+
 def _is_public_path(path: str) -> bool:
     return any(path == prefix.rstrip("/") or path.startswith(prefix.rstrip("/") + "/") for prefix in PUBLIC_PATHS)
 
@@ -533,10 +541,27 @@ def create_app(
             return f"{scheme}://{auth.hostname}{port}"
         return str(request.base_url).rstrip("/")
 
+    def ip_base(request: Request) -> str:
+        """Redirect's own address, the one this request reached (the server socket's), on PORT. It works where
+        no name resolves. PUBLIC_BASE_URL wins: behind a reverse proxy, that address is an internal one."""
+        if settings.public_base_url:
+            return settings.public_base_url
+        server = request.scope.get("server")
+        host = str(server[0]) if server else (request.url.hostname or "localhost")
+        return ip_base_url(request.url.scheme, host, settings.port)
+
+    def base_of(redirect: Redirect, request: Request) -> str:
+        """NanoURLs and QR codes use the IP address unless they chose the hostname; other redirects, the
+        hostname of the settings."""
+        if redirect.kind != "link" and redirect.link_host == "ip":
+            return ip_base(request)
+        return base_url(request)
+
     def out(redirect: Redirect, request: Request) -> RedirectOut:
-        base = base_url(request)
+        base = base_of(redirect, request)
         return RedirectOut(
             kind=redirect.kind,
+            link_host=None if redirect.kind == "link" else redirect.link_host,
             id=redirect.code,
             slug=redirect.slug,
             name=redirect.name,
@@ -704,7 +729,9 @@ def create_app(
     def list_redirects(request: Request) -> RedirectList:
         if source_of(request) == "api":
             record("read", request, path=_route_path(request))
-        return RedirectList(base_url=base_url(request), redirects=[out(r, request) for r in db.list_all()])
+        return RedirectList(
+            base_url=base_url(request), ip_base_url=ip_base(request), redirects=[out(r, request) for r in db.list_all()]
+        )
 
     @app.post("/api/redirects", status_code=201, response_model=RedirectOut, responses={409: {"model": ErrorOut}})
     def create_redirect(body: RedirectIn, request: Request) -> Response | RedirectOut:
@@ -752,13 +779,14 @@ def create_app(
             return _error(422, t("errors.fields_invalid"), {"name": exc.message()})
 
     def create_named(
-        section: str, kind: str, name: str, target: str, design: str | None, request: Request
+        section: str, kind: str, body: NanoIn, design: str | None, request: Request
     ) -> Response | Redirect:
+        name, target = body.name, body.target
         slug = named_slug(section, name)
         if isinstance(slug, JSONResponse):
             return slug
         try:
-            created = db.create(slug, name, target, kind, design)
+            created = db.create(slug, name, target, kind, design, body.link_host)
         except SlugTakenError:
             return name_taken()
         logger.info("created %s id=%s slug=%s", kind, created.code, created.slug)
@@ -766,8 +794,9 @@ def create_app(
         return created
 
     def update_named(
-        code: str, section: str, kind: str, name: str, target: str, design: str | None, request: Request
+        code: str, section: str, kind: str, body: NanoIn, design: str | None, request: Request
     ) -> Response | Redirect:
+        name, target = body.name, body.target
         existing = db.get(code)
         if existing is None or existing.kind != kind:
             return _error(404, t("errors.not_found"))
@@ -775,7 +804,7 @@ def create_app(
         if isinstance(slug, JSONResponse):
             return slug
         try:
-            updated = db.update(code, slug, name, target, design)
+            updated = db.update(code, slug, name, target, design, body.link_host)
         except SlugTakenError:
             return name_taken()
         if updated is None:
@@ -792,7 +821,7 @@ def create_app(
 
     def list_of(kind: str, request: Request) -> RedirectList:
         redirects = [out(r, request) for r in db.list_all() if r.kind == kind]
-        return RedirectList(base_url=base_url(request), redirects=redirects)
+        return RedirectList(base_url=base_url(request), ip_base_url=ip_base(request), redirects=redirects)
 
     @app.get("/api/nanourls")
     def list_nanos(request: Request) -> RedirectList:
@@ -802,12 +831,12 @@ def create_app(
 
     @app.post("/api/nanourls", status_code=201, response_model=RedirectOut, responses={409: {"model": ErrorOut}})
     def create_nano(body: NanoIn, request: Request) -> Response | RedirectOut:
-        created = create_named(NANO_SECTION, "nano", body.name, body.target, None, request)
+        created = create_named(NANO_SECTION, "nano", body, None, request)
         return out(created, request) if isinstance(created, Redirect) else created
 
     @app.put("/api/nanourls/{redirect_id}", response_model=RedirectOut, responses={404: {"model": ErrorOut}})
     def update_nano(redirect_id: str, body: NanoIn, request: Request) -> Response | RedirectOut:
-        updated = update_named(redirect_id, NANO_SECTION, "nano", body.name, body.target, None, request)
+        updated = update_named(redirect_id, NANO_SECTION, "nano", body, None, request)
         return out(updated, request) if isinstance(updated, Redirect) else updated
 
     @app.delete("/api/nanourls/{redirect_id}", status_code=204, responses={404: {"model": ErrorOut}})
@@ -829,12 +858,12 @@ def create_app(
         if source_of(request) == "api":
             record("read", request, path=_route_path(request))
         qrcodes = [qr_out(r, request, with_svg=False) for r in db.list_all() if r.kind == "qrcode"]
-        return QRList(base_url=base_url(request), qrcodes=qrcodes)
+        return QRList(base_url=base_url(request), ip_base_url=ip_base(request), qrcodes=qrcodes)
 
     @app.post(QR_API, status_code=201, response_model=QROut, responses={409: {"model": ErrorOut}})
     def create_qrcode(body: QRIn, request: Request) -> Response | QROut:
         design = body.design.model_dump_json()
-        created = create_named(QRCODE_SECTION, "qrcode", body.name, body.target, design, request)
+        created = create_named(QRCODE_SECTION, "qrcode", body, design, request)
         return qr_out(created, request, with_svg=True) if isinstance(created, Redirect) else created
 
     @app.post(f"{QR_API}/preview")
@@ -842,7 +871,8 @@ def create_app(
         """The QR code a design would give, without saving it: of the QR code `id`, or of a new one."""
         existing = qr_of(body.id) if body.id else None
         code = existing.code if existing else "Preview0"  # a new id has the same length: the same QR size
-        return SvgOut(svg=render_svg(short_url(base_url(request), code), body.design))
+        base = ip_base(request) if body.link_host == "ip" else base_url(request)
+        return SvgOut(svg=render_svg(short_url(base, code), body.design))
 
     @app.get(f"{QR_API}/{{redirect_id}}", response_model=QROut, responses={404: {"model": ErrorOut}})
     def get_qrcode(redirect_id: str, request: Request) -> Response | QROut:
@@ -868,7 +898,7 @@ def create_app(
     @app.put(f"{QR_API}/{{redirect_id}}", response_model=QROut, responses={404: {"model": ErrorOut}})
     def update_qrcode(redirect_id: str, body: QRIn, request: Request) -> Response | QROut:
         design = body.design.model_dump_json()
-        updated = update_named(redirect_id, QRCODE_SECTION, "qrcode", body.name, body.target, design, request)
+        updated = update_named(redirect_id, QRCODE_SECTION, "qrcode", body, design, request)
         return qr_out(updated, request, with_svg=True) if isinstance(updated, Redirect) else updated
 
     @app.delete(f"{QR_API}/{{redirect_id}}", status_code=204, responses={404: {"model": ErrorOut}})

@@ -88,9 +88,11 @@ Paths starting with `Api`, `QRcodes` or `NanoURL` are kept for Redirect's own se
 
 ## Share a NanoURL or a QR code
 
-A NanoURL is a short link made from a name and a target: the NanoURL section gives `http://redirect.lan/links/k3F9xQ2a` and files it under `NanoURL/<name>`. Change its target later and the short link stays.
+A NanoURL is a short link made from a name and a target: the NanoURL section gives `http://192.168.1.20/links/k3F9xQ2a` and files it under `NanoURL/<name>`. Change its target later and the short link stays.
 
-A QR code works the same way under `QRcodes/<name>`, and the code carries the short link, so a printed QR code follows the target you set afterwards. The QR codes section chooses its look: the color and shape of the modules and of the corners, a background color or none, a logo in the center, the margin. A preview follows each change, and Download SVG saves the file. Colors too close to the background are refused, since scanners could not read them. The link inside the code uses the hostname of the moment: change the hostname and the QR codes you print afterwards change too.
+NanoURLs and QR codes write their link with Redirect's IP address by default, the address the interface was reached on: it works even when no DNS entry or mDNS answer reaches the person who opens it. Choose Hostname at creation to write it with the hostname instead, such as `http://redirect.lan/links/k3F9xQ2a`. Both forms lead to the same place; the choice only decides which one is shown and printed.
+
+A QR code works the same way under `QRcodes/<name>`, and the code carries the short link, so a printed QR code follows the target you set afterwards, as long as Redirect keeps its address. The QR codes section chooses its look: the color and shape of the modules and of the corners, a background color or none, a logo in the center, the margin. A preview follows each change, and Download SVG saves the file. Colors too close to the background are refused, since scanners could not read them. A QR code on the hostname carries the hostname of the moment: change the hostname and the QR codes you print afterwards change too.
 
 ## Read the log
 
@@ -126,8 +128,8 @@ curl -X DELETE -H "Authorization: Bearer $KEY" $BASE/api/redirects/k3F9xQ2a
 The other routes take the same key:
 
 - `GET /api/logs` returns the log, newest first: `limit` (1 to 1000, 100 by default), `before` (the `next` of the previous page) and `kind` (`visits`, `changes` or `reads`).
-- `POST /api/nanourls` with a `name` and a `target` creates a NanoURL and answers 201 with its `id` and its `short_url`. `GET` lists them, `PUT` and `DELETE /api/nanourls/<id>` change or remove one.
-- `POST /api/qrcodes` with a `name`, a `target` and an optional `design` creates a QR code and answers 201 with its `id` and the image itself in `svg`. `GET /api/qrcodes/<id>/svg` serves the file, and `PUT` and `DELETE /api/qrcodes/<id>` change or remove one. A `design` holds `color`, `eye_color` and `background` (`#rrggbb`, or `transparent` for the background), `module_style` (`square`, `rounded` or `dots`), `eye_style` (`square`, `rounded` or `circle`), `logo` (a `data:image/...;base64,` URI), `logo_size` (0.1 to 0.3) and `margin` (0 to 10).
+- `POST /api/nanourls` with a `name`, a `target` and an optional `link_host` (`ip`, the default, or `hostname`) creates a NanoURL and answers 201 with its `id` and its `short_url`. `GET` lists them, `PUT` and `DELETE /api/nanourls/<id>` change or remove one.
+- `POST /api/qrcodes` with a `name`, a `target`, an optional `link_host` and an optional `design` creates a QR code and answers 201 with its `id` and the image itself in `svg`. `GET /api/qrcodes/<id>/svg` serves the file, and `PUT` and `DELETE /api/qrcodes/<id>` change or remove one. A `design` holds `color`, `eye_color` and `background` (`#rrggbb`, or `transparent` for the background), `module_style` (`square`, `rounded` or `dots`), `eye_style` (`square`, `rounded` or `circle`), `logo` (a `data:image/...;base64,` URI), `logo_size` (0.1 to 0.3) and `margin` (0 to 10).
 
 Errors come back as JSON with a `detail` message and, for invalid fields, one message per field in `errors`: 401 for a missing or wrong key, 403 while the API is off or from outside the local network, 404 for an unknown id, 409 for a path or a name already taken, 422 for invalid values. The key only manages redirects: generating a new key takes a login in the interface.
 

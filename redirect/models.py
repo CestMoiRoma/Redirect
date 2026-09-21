@@ -200,9 +200,16 @@ class RedirectIn(BaseModel):
         return validate_target(value)
 
 
+# How a NanoURL or a QR code writes its link: with Redirect's IP address, which works without any DNS (the
+# default), or with the hostname of the settings
+LinkHost = Literal["ip", "hostname"]
+
+
 class RedirectOut(BaseModel):
     # link (typed by hand), nano (a NanoURL) or qrcode
     kind: str
+    # ip or hostname for a NanoURL or a QR code; None for a redirect typed by hand
+    link_host: str | None
     # The short id: /links/<id>, and the redirect's name in the API (PUT and DELETE /api/redirects/<id>)
     id: str
     slug: str
@@ -218,6 +225,8 @@ class RedirectList(BaseModel):
     """Body of GET /api/redirects. `base_url` lets the form preview the link before the entry exists."""
 
     base_url: str
+    # The base of the NanoURLs and QR codes that use the IP address
+    ip_base_url: str
     redirects: list[RedirectOut]
 
 
@@ -319,6 +328,7 @@ class NanoIn(BaseModel):
 
     name: str
     target: str
+    link_host: LinkHost = "ip"
 
     @field_validator("name")
     @classmethod
@@ -421,6 +431,7 @@ class QRPreviewIn(BaseModel):
 
     design: QRDesign = QRDesign()
     id: str | None = None
+    link_host: LinkHost = "ip"
 
 
 class QROut(RedirectOut):
@@ -433,6 +444,7 @@ class QROut(RedirectOut):
 
 class QRList(BaseModel):
     base_url: str
+    ip_base_url: str
     qrcodes: list[QROut]
 
 

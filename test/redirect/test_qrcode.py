@@ -139,7 +139,7 @@ def test_creating_answers_201_with_the_id_and_the_svg(client):
     assert response.status_code == 201
     body = response.json()
     assert (body["kind"], body["id"], body["slug"]) == ("qrcode", "id000001", "QRcodes/Lunch-menu")
-    assert body["short_url"] == "http://redirect.lan/links/id000001"
+    assert (body["link_host"], body["short_url"]) == ("ip", "http://testserver/links/id000001")
     assert body["design"]["color"] == "#0b3d91"
     assert body["svg"] == render_svg(body["short_url"], QRDesign(color="#0b3d91"))
     assert body["svg_url"] == "/api/qrcodes/id000001/svg"
@@ -154,7 +154,7 @@ def test_the_qr_code_leads_to_the_target(client):
 def test_listing_and_reading_one(client):
     body = qr(client).json()
     listed = client.get("/api/qrcodes").json()
-    assert listed["base_url"] == "http://redirect.lan"
+    assert (listed["base_url"], listed["ip_base_url"]) == ("http://redirect.lan", "http://testserver")
     assert [(q["id"], q["svg"]) for q in listed["qrcodes"]] == [(body["id"], None)]  # the list stays light
     assert client.get(f"/api/qrcodes/{body['id']}").json()["svg"] == body["svg"]
 
@@ -203,7 +203,9 @@ def test_a_name_already_used_is_refused(client):
 def test_the_preview_is_the_qr_code_of_the_future_link(client):
     response = client.post("/api/qrcodes/preview", json={"design": {"module_style": "rounded"}})
     assert response.status_code == 200
-    assert response.json()["svg"] == render_svg("http://redirect.lan/links/Preview0", QRDesign(module_style="rounded"))
+    assert response.json()["svg"] == render_svg("http://testserver/links/Preview0", QRDesign(module_style="rounded"))
+    by_name = client.post("/api/qrcodes/preview", json={"design": {}, "link_host": "hostname"}).json()["svg"]
+    assert by_name == render_svg("http://redirect.lan/links/Preview0", QRDesign())
     body = qr(client).json()
     existing = client.post("/api/qrcodes/preview", json={"id": body["id"], "design": {}}).json()["svg"]
     assert existing == body["svg"]
@@ -232,3 +234,9 @@ def test_qr_changes_are_logged(client):
         ("update", "QRcodes/Dinner-menu"),
         ("create", "QRcodes/Lunch-menu"),
     ]
+
+
+def test_a_qr_code_on_the_hostname_carries_it(client):
+    body = client.post("/api/qrcodes", json={"name": "Menu", "target": TARGET, "link_host": "hostname"}).json()
+    assert body["short_url"] == "http://redirect.lan/links/id000001"
+    assert body["svg"] == render_svg("http://redirect.lan/links/id000001", QRDesign())

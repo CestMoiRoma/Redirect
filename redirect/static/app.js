@@ -10,6 +10,7 @@
   const state = {
     strings: {},
     baseUrl: '',
+    ipBaseUrl: '', // the base of NanoURLs and QR codes that use the IP address
     redirects: [],
     filter: '',
     highlightId: null, // the entry just created or saved
@@ -90,6 +91,7 @@
   async function reload() {
     const data = await api('GET', '/api/redirects')
     state.baseUrl = data.base_url
+    state.ipBaseUrl = data.ip_base_url
     state.redirects = data.redirects
     render()
     renderNanos()
@@ -183,6 +185,13 @@
 
     document.querySelectorAll('[data-base-url]').forEach((el) => {
       el.textContent = `${state.baseUrl}/redirect/`
+    })
+    // What each choice of link address gives, for NanoURLs and QR codes
+    document.querySelectorAll('[data-link-example]').forEach((el) => {
+      el.textContent =
+        el.dataset.linkExample === 'ip'
+          ? t('linkhost.ip.hint', { url: `${state.ipBaseUrl}/links/<id>` })
+          : t('linkhost.hostname.hint', { url: `${state.baseUrl}/links/<id>` })
     })
   }
 
@@ -433,7 +442,10 @@
       submitting(
         form,
         async () => {
-          const created = await api('POST', '/api/nanourls', formValues(form))
+          const created = await api('POST', '/api/nanourls', {
+            ...formValues(form),
+            link_host: form.elements.link_host.value,
+          })
           form.reset()
           state.highlightId = created.id
           await reload()
@@ -452,7 +464,10 @@
       submitting(
         editForm,
         async () => {
-          const saved = await api('PUT', `/api/nanourls/${id}`, formValues(editForm))
+          const saved = await api('PUT', `/api/nanourls/${id}`, {
+            ...formValues(editForm),
+            link_host: editForm.elements.link_host.value,
+          })
           dialog.close()
           state.highlightId = saved.id
           await reload()
@@ -479,6 +494,7 @@
         state.editing = nano
         clearErrors(editForm)
         for (const name of fieldsOf(editForm)) editForm.elements[name].value = nano[name]
+        editForm.elements.link_host.value = nano.link_host
         dialog.showModal()
         editForm.elements.target.focus()
         editForm.elements.target.select()
@@ -788,6 +804,7 @@
       const { svg } = await api('POST', '/api/qrcodes/preview', {
         design: readDesign(),
         id: state.qrEditing ? state.qrEditing.id : null,
+        link_host: $('#qr-form').elements.link_host.value,
       })
       $('#qr-preview').src = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`
       setDesignError(null)
@@ -814,6 +831,7 @@
     clearErrors(form)
     form.elements.name.value = qr.name
     form.elements.target.value = qr.target
+    form.elements.link_host.value = qr.link_host
     showDesign(qr.design)
     $('#qr-form-title').textContent = t('qr.edit.title')
     $('#qr-submit').textContent = t('form.edit.submit')
@@ -868,6 +886,8 @@
         refreshPreview()
       })
     }
+    // The link address is inside the QR code: the preview follows it
+    form.querySelectorAll('input[name="link_host"]').forEach((radio) => radio.addEventListener('change', refreshPreview))
     // Ranges show their value while they move; the preview follows on release
     for (const selector of ['#qr-logo-size', '#qr-margin']) $(selector).addEventListener('input', showDesignValues)
     $('#qr-logo').addEventListener('change', (event) => {
@@ -900,7 +920,12 @@
       submitting(
         form,
         async () => {
-          const body = { name: form.elements.name.value, target: form.elements.target.value, design: readDesign() }
+          const body = {
+            name: form.elements.name.value,
+            target: form.elements.target.value,
+            link_host: form.elements.link_host.value,
+            design: readDesign(),
+          }
           const editing = state.qrEditing
           const saved = editing
             ? await api('PUT', `/api/qrcodes/${editing.id}`, body)

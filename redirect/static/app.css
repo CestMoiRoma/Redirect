@@ -672,6 +672,12 @@ input[aria-invalid='true'] {
   border-radius: 8px;
 }
 
+/* Each choice's example sits under it, aligned with its label */
+.link-host .hint {
+  margin: -6px 0 0 28px;
+  overflow-wrap: anywhere;
+}
+
 .design legend {
   padding: 0 6px;
   font-weight: 600;

@@ -37,6 +37,8 @@ from redirect.main import create_app  # noqa: E402
 FIXTURE_DB = HERE / "fixtures" / "redirect.db"
 # The links use the default hostname, redirect.lan, on port 80: the router below answers for it
 LINKS_BASE = "http://redirect.lan"
+# NanoURLs and QR codes use Redirect's IP address by default: the one the browser reached, on port 80
+IP_BASE = "http://127.0.0.1"
 PREFIX = f"{LINKS_BASE}/redirect/"
 # Hosts of the targets the scenario follows; Chromium resolves them to the local target server
 TARGET_DOMAIN = "intranet.local"
@@ -321,7 +323,7 @@ class Scenario:
             origin = f"{url.scheme}://{url.netloc}"
             if origin == base or (url.hostname or "").endswith("." + TARGET_DOMAIN):
                 route.continue_()
-            elif origin == LINKS_BASE:
+            elif origin in (LINKS_BASE, IP_BASE):
                 # The public host does not resolve: answer from the real app, redirects left to the browser
                 path = url.path + (f"?{url.query}" if url.query else "")
                 response = route.fetch(url=base + path, max_redirects=0)
@@ -488,7 +490,11 @@ def main_walk(run: Scenario, data_dir: Path) -> None:
 
         # --- Create: every validation error, then success
         form = page.locator("#create-form")
-        slug, name, target = form.get_by_label("Path"), form.get_by_label("Name"), form.get_by_label("Target URL")
+        slug, name, target = (
+            form.get_by_label("Path"),
+            form.get_by_label("Name", exact=True),
+            form.get_by_label("Target URL"),
+        )
         errors = {field: page.locator(f"#create-{field}-error") for field in ("slug", "name", "target")}
         submit = form.get_by_role("button", name="Create redirect")
 
@@ -982,7 +988,7 @@ def auth_walk(run: Scenario, data_dir: Path) -> None:
         page.context.clear_cookies()
         form = page.locator("#create-form")
         form.get_by_label("Path").fill("docs")
-        form.get_by_label("Name").fill("Docs")
+        form.get_by_label("Name", exact=True).fill("Docs")
         form.get_by_label("Target URL").fill("http://docs.intranet.local/")
         with run.watch.http_error(page, api, 401):
             form.get_by_role("button", name="Create redirect").click()
@@ -1226,15 +1232,24 @@ def nano_walk(run: Scenario, data_dir: Path) -> None:
             ["No NanoURL yet", "Give a name and a target in the form: Redirect makes the short link."]
         )
         form = view.locator("#nano-form")
-        name, target = form.get_by_label("Name"), form.get_by_label("Target URL")
+        name, target = form.get_by_label("Name", exact=True), form.get_by_label("Target URL")
         submit = form.get_by_role("button", name="Create NanoURL")
         run.shot(page, "34-nano-empty", fonts=FORM_FONTS)
+
+        # --- The link address: Redirect's IP by default, which works without any DNS; the hostname on demand
+        expect(form.get_by_label("IP address")).to_be_checked()
+        expect(form.locator("[data-link-example]")).to_have_text(
+            [
+                f"Works without any DNS: {IP_BASE}/links/<id>",
+                f"Needs a DNS entry or mDNS to reach people: {LINKS_BASE}/links/<id>",
+            ]
+        )
 
         # --- Created: its short link comes first, ready to copy
         name.fill("Team lunch")
         target.fill("http://wiki.intranet.local/lunch")
         submit.click()
-        short = f"{LINKS_BASE}/links/New00001"
+        short = f"{IP_BASE}/links/New00001"
         expect(status).to_have_text(f"NanoURL “Team lunch” created: {short}")
         expect(items).to_have_count(1)
         expect(items.locator(".link")).to_have_text(short)
@@ -1274,12 +1289,24 @@ def nano_walk(run: Scenario, data_dir: Path) -> None:
         items.get_by_role("button", name="Edit: Team lunch").click()
         dialog = page.locator("#nano-dialog")
         expect(dialog.get_by_role("heading", level=2)).to_have_text("Edit NanoURL")
-        expect(dialog.get_by_label("Name")).to_have_value("Team lunch")
+        expect(dialog.get_by_label("Name", exact=True)).to_have_value("Team lunch")
         edit_target = dialog.get_by_label("Target URL")
         expect(edit_target).to_be_focused()
+        expect(dialog.get_by_label("IP address")).to_be_checked()
         edit_target.fill("http://wiki.intranet.local/friday")
         dialog.get_by_role("button", name="Save changes").click()
         expect(status).to_have_text("Redirect “Team lunch” saved.")
+        expect(items.locator(".link")).to_have_text(short)
+
+        # --- On the hostname instead: the same short link, written with redirect.lan
+        items.get_by_role("button", name="Edit: Team lunch").click()
+        dialog.get_by_label("Hostname").check()
+        dialog.get_by_role("button", name="Save changes").click()
+        expect(items.locator(".link")).to_have_text(f"{LINKS_BASE}/links/New00001")
+        items.get_by_role("button", name="Edit: Team lunch").click()
+        expect(dialog.get_by_label("Hostname")).to_be_checked()
+        dialog.get_by_label("IP address").check()
+        dialog.get_by_role("button", name="Save changes").click()
         expect(items.locator(".link")).to_have_text(short)
         expect(items.locator(".target-url")).to_have_text("http://wiki.intranet.local/friday")
 
@@ -1336,7 +1363,7 @@ def qr_walk(run: Scenario, data_dir: Path) -> None:
             ["No QR code yet", "Give a name and a target, choose a look, then download the SVG."]
         )
         expect(view.locator("#qr-form-title")).to_have_text("New QR code")
-        expect(form.locator("legend")).to_have_text("Look")
+        expect(form.locator("legend")).to_have_text(["Link address", "Look"])
         expect(preview).to_have_attribute("src", re.compile(r"^data:image/svg\+xml"))
         expect(preview).to_have_attribute("alt", "Preview of the QR code")
         expect(view.locator("#qr-logo-size-value")).to_have_text("22 %")
@@ -1344,11 +1371,12 @@ def qr_walk(run: Scenario, data_dir: Path) -> None:
         expect(view.get_by_role("button", name="Remove the logo")).to_be_hidden()
         expect(view.locator("#qr-logo-size")).to_be_disabled()
         expect(view.get_by_role("button", name="Cancel")).to_be_hidden()
+        expect(form.get_by_label("IP address")).to_be_checked()
         assert 'fill="#1b1f24"' in preview_svg(page)
         run.shot(page, "37-qr-empty", fonts=FORM_FONTS)
 
         # --- A full design: colors, dots, round corners, a logo, a thinner margin
-        form.get_by_label("Name").fill("Lunch menu")
+        form.get_by_label("Name", exact=True).fill("Lunch menu")
         form.get_by_label("Target URL").fill("http://wiki.intranet.local/menu")
         form.get_by_label("Modules").fill("#0b3d91")
         form.get_by_label("Corners").fill("#c2185b")
@@ -1371,7 +1399,7 @@ def qr_walk(run: Scenario, data_dir: Path) -> None:
         expect(status).to_have_text("QR code “Lunch menu” created.")
         expect(cards).to_have_count(1)
         card = cards.nth(0)
-        short = f"{LINKS_BASE}/links/New00001"
+        short = f"{IP_BASE}/links/New00001"
         expect(card.locator(".item-name")).to_have_text("Lunch menu")
         expect(card.locator(".link")).to_have_text(short)
         expect(card.locator(".qr-image")).to_have_attribute("alt", "QR code of Lunch menu")
@@ -1381,7 +1409,7 @@ def qr_walk(run: Scenario, data_dir: Path) -> None:
         expect(card.locator(".item-actions > *")).to_have_text(["Download SVG", "Edit", "Delete"])
         expect(card.locator(".target-label")).to_have_text("Target")
         expect(view.locator("#qr-form-title")).to_have_text("New QR code")
-        expect(form.get_by_label("Name")).to_have_value("")
+        expect(form.get_by_label("Name", exact=True)).to_have_value("")
         expect(view.locator("#qr-count")).to_have_text("1 QR code")
         run.shot(page, "39-qr-created")
         with page.expect_download() as download_info:
@@ -1399,8 +1427,8 @@ def qr_walk(run: Scenario, data_dir: Path) -> None:
         # --- Edit: colors too close are refused before anything is saved, then a new corner shape
         card.get_by_role("button", name="Edit: Lunch menu").click()
         expect(view.locator("#qr-form-title")).to_have_text("Edit QR code")
-        expect(form.get_by_label("Name")).to_have_value("Lunch menu")
-        expect(form.get_by_label("Name")).to_be_focused()
+        expect(form.get_by_label("Name", exact=True)).to_have_value("Lunch menu")
+        expect(form.get_by_label("Name", exact=True)).to_be_focused()
         expect(form.get_by_label("Modules")).to_have_value("#0b3d91")
         expect(view.get_by_role("button", name="Cancel")).to_be_visible()
         with run.watch.http_error(page, base + "/api/qrcodes/preview", 422):

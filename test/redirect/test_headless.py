@@ -13,7 +13,7 @@ from support import LOCAL_CLIENT
 
 from redirect.config import Settings
 
-HEADLESS_TEXT = "The interface is turned off (HEADLESS): use the API, with the API key."
+RUNNING = "Redirect is running"
 KEY_REQUIRED = {"detail": "Send the API key: Authorization: Bearer <key>.", "errors": {}}
 BODY = {"slug": "wiki", "name": "Wiki", "target": "http://wiki.example/"}
 
@@ -55,12 +55,16 @@ def test_the_first_start_prints_a_key_once(make_client, headless, messages):
     assert len([m for m in messages if m.startswith("HEADLESS: API key created")]) == 1
 
 
-def test_the_interface_is_gone(headless):
+def plain(response, status: int) -> None:
+    """One line of plain text: no page, no style sheet, no JSON."""
+    assert response.status_code == status
+    assert response.headers["content-type"] == "text/plain; charset=utf-8"
+    assert response.text == RUNNING
+
+
+def test_the_interface_is_one_line(headless):
     client, _ = headless
-    response = client.get("/")
-    assert response.status_code == 404
-    assert "<title>Interface turned off</title>" in response.text
-    assert "Open Redirect" not in response.text
+    plain(client.get("/"), 200)
 
 
 @pytest.mark.parametrize(
@@ -71,13 +75,25 @@ def test_the_interface_is_gone(headless):
         ("GET", "/api/settings"),
         ("POST", "/api/key"),
         ("POST", "/api/qrcodes/preview"),
+        ("GET", "/static/app.css"),
+        ("GET", "/static/app.js"),
+        ("GET", "/anything"),
     ],
 )
-def test_the_interface_routes_are_gone(headless, method, path):
+def test_everything_of_the_interface_is_the_same_line(headless, method, path):
     client, key = headless
-    response = client.request(method, path, headers=bearer(key), json={})
-    assert response.status_code == 404
-    assert response.json() == {"detail": HEADLESS_TEXT, "errors": {}}
+    plain(client.request(method, path, headers=bearer(key), json={}), 404)
+
+
+def test_a_link_that_leads_nowhere_is_the_same_line(headless):
+    client, _ = headless
+    plain(client.get("/redirect/nope", follow_redirects=False), 404)
+    plain(client.get("/links/Zz9Zz9Zz", follow_redirects=False), 404)
+
+
+def test_the_health_check_stays(headless):
+    client, _ = headless
+    assert client.get("/api/health").json() == {"status": "ok"}
 
 
 def test_the_api_needs_the_key(headless):
@@ -125,6 +141,9 @@ def test_outside_the_local_network_the_api_still_answers_403(headless):
     client, key = headless
     outside = TestClient(client.app, client=("203.0.113.9", 40000))
     assert outside.get("/api/redirects", headers=bearer(key)).status_code == 403
+    # From outside too, anything but the API is the same line
+    plain(outside.get("/"), 200)
+    plain(outside.get("/redirect"), 404)
 
 
 def test_the_api_key_command_replaces_the_key_while_running(headless, tmp_path):

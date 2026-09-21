@@ -135,7 +135,7 @@ Errors come back as JSON with a `detail` message and, for invalid fields, one me
 
 ## Run it without the interface
 
-With `HEADLESS=true`, the interface is off: its address answers 404, and the redirects, NanoURLs, QR codes and the log are only reachable through the API, with the API key. On its first start, a headless Redirect creates a key and writes it once to its log:
+With `HEADLESS=true`, the interface is off: anything but the links and the API answers one line of plain text, `Redirect is running`, and the redirects, NanoURLs, QR codes and the log are only reachable through the API, with the API key. On its first start, a headless Redirect creates a key and writes it once to its log:
 
 ```sh
 docker compose logs redirect | grep "API key created"

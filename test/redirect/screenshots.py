@@ -1462,15 +1462,13 @@ def headless_walk(run: Scenario, data_dir: Path) -> None:
     shutil.copyfile(FIXTURE_DB, data_dir / "redirect.db")
     with app_server(data_dir, headless=True) as base:
         page = run.open(base)
-        with run.watch.http_error(page, base + "/", 404):
-            response = page.goto(base + "/")
-        assert response is not None and response.status == 404
-        expect(page).to_have_title("Interface turned off")
-        expect(page.locator(".standalone p")).to_have_text(
-            "This Redirect runs without its interface (HEADLESS is set): its redirects are managed through the API."
-        )
-        expect(page.get_by_role("link")).to_have_count(0)
-        run.shot(page, "43-headless", full_page=False, fonts=INTER)
+        response = page.goto(base + "/")
+        assert response is not None and response.status == 200
+        assert response.headers["content-type"] == "text/plain; charset=utf-8"
+        expect(page.locator("body")).to_have_text("Redirect is running")
+        # Nothing but the text (the style[data-golden] sheet is the scenario's own, injected in every page)
+        expect(page.locator("link, style:not([data-golden]), script, img")).to_have_count(0)
+        run.shot(page, "43-headless", full_page=False, fonts=())
         # The first key is the first of KEY_BODIES; the links keep working
         headers = {"Authorization": f"Bearer {FIRST_KEY}"}
         assert page.request.get(base + "/api/list", headers=headers).status == 200

@@ -16,7 +16,7 @@ from pathlib import Path
 from fastapi import FastAPI, Query, Request, Response
 from fastapi.exception_handlers import http_exception_handler
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic_core import PydanticCustomError
 from starlette.exceptions import HTTPException as StarletteHTTPException
@@ -496,16 +496,6 @@ def create_app(
         return await call_next(request)
 
     @app.middleware("http")
-    async def headless(request: Request, call_next: Callable[[Request], Awaitable[Response]]) -> Response:
-        """HEADLESS: the interface and its routes are gone; the links and the API (with the key) remain."""
-        path = _route_path(request)
-        if not settings.headless or _is_public_path(path) or (_is_redirects_api(path) and path != f"{QR_API}/preview"):
-            return await call_next(request)
-        if path.startswith("/api/"):
-            return _error(404, t("errors.headless"))
-        return HTMLResponse(render_page(t("headless.title"), t("headless.text"), link=False), status_code=404)
-
-    @app.middleware("http")
     async def only_local(request: Request, call_next: Callable[[Request], Awaitable[Response]]) -> Response:
         """Runs before the login check: an address outside the local network learns nothing but a 403."""
         path = _route_path(request)
@@ -520,6 +510,25 @@ def create_app(
             return _error(403, t("errors.local_only"))
         # No link to the interface: from there, it would only lead to this page again
         return HTMLResponse(render_page(t("denied.title"), t("denied.text"), link=False), status_code=403)
+
+    def running(status: int) -> PlainTextResponse:
+        return PlainTextResponse(t("headless.running"), status_code=status, headers={"Cache-Control": "no-store"})
+
+    @app.middleware("http")
+    async def headless(request: Request, call_next: Callable[[Request], Awaitable[Response]]) -> Response:
+        """HEADLESS: the links and the API (with the key) answer; anything else is one line of plain text,
+        no page, no style sheet, no JSON. It wraps the local-only check, so a refusal is that line too."""
+        if not settings.headless:
+            return await call_next(request)
+        path = _route_path(request)
+        api = path == "/api/health" or (_is_redirects_api(path) and path != f"{QR_API}/preview")
+        if not (_is_redirect_path(path) or api):
+            return running(200 if path == "/" else 404)
+        response = await call_next(request)
+        # A link that leads nowhere, a refusal: the status stays, the page goes
+        if response.headers.get("content-type", "").startswith("text/html"):
+            return running(response.status_code)
+        return response
 
     @app.middleware("http")
     async def security_headers(request: Request, call_next: Callable[[Request], Awaitable[Response]]) -> Response:

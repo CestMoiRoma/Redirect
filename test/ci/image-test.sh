@@ -257,7 +257,9 @@ stop "$RUN_ID-g"
 RUN_VOLUME="$VOLUME-headless" start "$RUN_ID-h" --env HEADLESS=true
 key="$(docker logs "$RUN_ID-h" 2>&1 | sed -n 's/.*shown this once: \(rdk_[^ ]*\).*/\1/p')"
 contains "HEADLESS prints its first key" "$key" "rdk_"
-check "GET / without the interface" "$(request "$BASE/")" 404
+check "GET / without the interface" "$(request "$BASE/")" 200
+check "the only thing it says" "$(cat "$WORK/body")" "Redirect is running"
+check "and it is plain text" "$(header content-type)" "text/plain; charset=utf-8"
 check "POST /api/login without the interface" "$(request --request POST --header 'Content-Type: application/json' \
   --data '{"password": "x"}' "$BASE/api/login")" 404
 check "GET /api/list without the key" "$(request "$BASE/api/list")" 401

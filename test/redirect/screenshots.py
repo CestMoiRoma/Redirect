@@ -87,6 +87,8 @@ SHOTS = (
     "38-qr-designed",
     "39-qr-created",
     "40-qr-contrast",
+    "41-denied",
+    "42-access-off",
 )
 
 # Web fonts each kind of page must have loaded (and so rendered with) when captured
@@ -145,6 +147,7 @@ def app_server(
     password: str | None = ADMIN_PASSWORD,
     public_base_url: str | None = None,
     api_enabled: bool | None = None,
+    local_only: bool | None = None,
 ) -> Iterator[str]:
     """The real app, in this process, on a free port. Backend clock frozen at the golden time, fixed API keys,
     and an mDNS announcer that stays off the network."""
@@ -154,6 +157,7 @@ def app_server(
         log_level="WARNING",
         admin_password=password,
         api_enabled=api_enabled,
+        local_only=local_only,
     )
     bodies = itertools.cycle(KEY_BODIES)
     ids = (f"New{number:05d}" for number in itertools.count(1))
@@ -1049,7 +1053,7 @@ def settings_walk(run: Scenario, data_dir: Path) -> None:
 def environment_walk(run: Scenario, data_dir: Path) -> None:
     """PUBLIC_BASE_URL and API_ENABLED set in the environment: the interface shows it and cannot change them."""
     shutil.copyfile(FIXTURE_DB, data_dir / "redirect.db")
-    with app_server(data_dir, public_base_url="https://go.example.org", api_enabled=True) as base:
+    with app_server(data_dir, public_base_url="https://go.example.org", api_enabled=True, local_only=True) as base:
         page = run.open(base)
         page.goto(base + "/")
         log_in(page)
@@ -1063,7 +1067,63 @@ def environment_walk(run: Scenario, data_dir: Path) -> None:
         expect(toggle).to_be_disabled()
         expect(page.locator("#api-forced")).to_have_text("Turned on by API_ENABLED in the container's environment.")
         expect(page.locator("#key-state")).to_have_text("No API key yet.")
+        local_only = page.get_by_label("Only answer on the local network")
+        expect(local_only).to_be_checked()
+        expect(local_only).to_be_disabled()
+        expect(page.locator("#access-forced")).to_have_text("Turned on by LOCAL_ONLY in the container's environment.")
         run.shot(page, "31-environment")
+        page.context.close()
+
+
+# An address outside the local network: the scenario's server trusts X-Forwarded-For from 127.0.0.1
+OUTSIDE = {"X-Forwarded-For": "203.0.113.9"}
+
+
+def access_walk(run: Scenario, data_dir: Path) -> None:
+    """Local only: an outside address gets the 403 page but follows links; turned off, it reaches the login."""
+    shutil.copyfile(FIXTURE_DB, data_dir / "redirect.db")
+    with app_server(data_dir) as base:
+        page = run.open(base)
+        page.goto(base + "/")
+        log_in(page)
+        card = page.locator("#access-card")
+        local_only = card.get_by_label("Only answer on the local network")
+        expect(card.get_by_role("heading", level=2)).to_have_text("Access")
+        expect(local_only).to_be_checked()
+        expect(local_only).to_be_enabled()
+        expect(card.locator(".access-help")).to_have_text(
+            "From any other address, the interface and the API answer 403."
+            " The links under /redirect/ and /links/ keep working from anywhere."
+        )
+        expect(card.locator("#access-off")).to_be_hidden()
+
+        # --- From outside: the page says no, the links still work
+        outside = run.open(base)
+        outside.set_extra_http_headers(OUTSIDE)
+        with run.watch.http_error(outside, base + "/", 403):
+            response = outside.goto(base + "/")
+        assert response is not None and response.status == 403
+        expect(outside).to_have_title("Not available from here")
+        expect(outside.locator(".standalone p")).to_have_text(
+            "Redirect's interface only answers on the local network. The links it gives out work from anywhere."
+        )
+        expect(outside.get_by_role("link")).to_have_count(0)
+        run.shot(outside, "41-denied", full_page=False, fonts=INTER)
+        assert outside.request.get(base + "/redirect/wiki", headers=OUTSIDE, max_redirects=0).status == 302
+        assert outside.request.get(base + "/api/list", headers=OUTSIDE).status == 403
+
+        # --- Turned off: a warning here, and the outside reaches the login screen
+        local_only.uncheck()
+        expect(card.locator("#access-off")).to_have_text(
+            "The interface and the API answer from any address: keep Redirect behind a firewall or a reverse proxy."
+        )
+        expect(local_only).to_be_focused()
+        run.shot(page, "42-access-off")
+        outside.goto(base + "/")
+        expect(outside.locator("#login-view")).to_be_visible()
+        outside.context.close()
+        local_only.check()
+        expect(card.locator("#access-off")).to_be_hidden()
         page.context.close()
 
 
@@ -1402,7 +1462,16 @@ def main(out_dir: Path) -> int:
                 with tempfile.TemporaryDirectory() as empty, tempfile.TemporaryDirectory() as seeded:
                     empty_list(run, Path(empty))
                     main_walk(run, Path(seeded))
-                for walk in (auth_walk, settings_walk, environment_walk, logs_walk, nano_walk, qr_walk, open_mode):
+                for walk in (
+                    auth_walk,
+                    settings_walk,
+                    environment_walk,
+                    access_walk,
+                    logs_walk,
+                    nano_walk,
+                    qr_walk,
+                    open_mode,
+                ):
                     with tempfile.TemporaryDirectory() as data:
                         walk(run, Path(data))
             browser.close()

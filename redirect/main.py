@@ -2,6 +2,7 @@
 
 import asyncio
 import html
+import ipaddress
 import time
 import logging
 import mimetypes
@@ -112,6 +113,26 @@ CUSTOM_ERRORS = tuple(f"{name}_" for name in (*FIELDS, "hostname", "design"))
 HOSTNAME = "hostname"
 HOSTNAME_ENABLED = "hostname_enabled"
 API_ENABLED = "api_enabled"
+LOCAL_ONLY = "local_only"
+# What stays open to any address when Redirect only answers on the local network: the links it gives out, the
+# container's health check, and the files the 403 page needs
+PUBLIC_PATHS = ("/redirect", "/links", "/api/health", "/static/")
+# The local network, spelled out (ipaddress's is_private also counts documentation and benchmark ranges):
+# private ranges, loopback, link-local, and 100.64.0.0/10, the shared space of Tailscale and similar VPNs
+LOCAL_NETWORKS = tuple(
+    ipaddress.ip_network(network)
+    for network in (
+        "10.0.0.0/8",
+        "172.16.0.0/12",
+        "192.168.0.0/16",
+        "127.0.0.0/8",
+        "169.254.0.0/16",
+        "100.64.0.0/10",
+        "::1/128",
+        "fc00::/7",
+        "fe80::/10",
+    )
+)
 # Routes only the admin session may use, never an API key
 SESSION_ONLY = ("/api/key", "/api/settings")
 
@@ -172,10 +193,16 @@ def configure_logging(level: str) -> None:
     logger.setLevel(level)
 
 
-def render_page(title: str, text: str) -> str:
+# The page's link to the interface, left out where the interface is out of reach
+_BACK_LINK = re.compile(r"\s*<a [^>]*>\{\{ back \}\}</a>")
+
+
+def render_page(title: str, text: str, link: bool = True) -> str:
     """A server-rendered page: texts come from strings.json, every inserted value is HTML-escaped."""
     values = {"title": title, "text": text, "back": t("page.back")}
     template = PAGE_TEMPLATE.read_text(encoding="utf-8")
+    if not link:
+        template = _BACK_LINK.sub("", template)
     return _TEMPLATE_KEY.sub(lambda m: html.escape(values[m.group(1)]), template)
 
 
@@ -267,6 +294,22 @@ PURGE_EVERY_SECONDS = 3600
 MAX_USER_AGENT = 300
 
 
+def is_local_address(host: str | None) -> bool:
+    """An address of LOCAL_NETWORKS (an IPv4 address mapped in IPv6 counts as itself). A client without a
+    readable address is not local."""
+    try:
+        address = ipaddress.ip_address(host or "")
+    except ValueError:
+        return False
+    if isinstance(address, ipaddress.IPv6Address) and address.ipv4_mapped:
+        address = address.ipv4_mapped
+    return any(address in network for network in LOCAL_NETWORKS if network.version == address.version)
+
+
+def _is_public_path(path: str) -> bool:
+    return any(path == prefix.rstrip("/") or path.startswith(prefix.rstrip("/") + "/") for prefix in PUBLIC_PATHS)
+
+
 def _is_redirects_api(path: str) -> bool:
     return any(path == prefix or path.startswith(prefix + "/") for prefix in KEY_API_PREFIXES)
 
@@ -286,6 +329,8 @@ class _State:
     hostname_enabled = True
     # The interface's choice; API_ENABLED, when set, overrides it
     api_enabled = False
+    # The interface's choice; LOCAL_ONLY, when set, overrides it
+    local_only = True
     # The hostname is announced on the LAN (mDNS)
     mdns = False
 
@@ -361,6 +406,7 @@ def create_app(
         auth.hostname = db.setting(HOSTNAME) or DEFAULT_HOSTNAME
         auth.hostname_enabled = db.setting(HOSTNAME_ENABLED) != "0"
         auth.api_enabled = db.setting(API_ENABLED) == "1"
+        auth.local_only = db.setting(LOCAL_ONLY) != "0"
         purge_log()
         # In a thread: announcing probes the network for about a second
         auth.mdns = await asyncio.to_thread(mdns.announce, announced_name())
@@ -388,6 +434,9 @@ def create_app(
     # Added before the two middlewares below, so it runs inside them: a 413 carries the security headers too
     app.add_middleware(BodySizeLimit)
 
+    def local_only() -> bool:
+        return settings.local_only if settings.local_only is not None else auth.local_only
+
     def api_enabled() -> bool:
         return settings.api_enabled if settings.api_enabled is not None else auth.api_enabled
 
@@ -414,6 +463,22 @@ def create_app(
             if not api_key_matches(key, auth.api_key_hash):
                 return _unauthorized(t("errors.api_key_invalid"))
         return await call_next(request)
+
+    @app.middleware("http")
+    async def only_local(request: Request, call_next: Callable[[Request], Awaitable[Response]]) -> Response:
+        """Runs before the login check: an address outside the local network learns nothing but a 403."""
+        path = _route_path(request)
+        if (
+            not local_only()
+            or _is_public_path(path)
+            or is_local_address(request.client.host if request.client else None)
+        ):
+            return await call_next(request)
+        logger.warning("refused %s from %s: not on the local network", path[:MAX_ECHOED_PATH], request.client)
+        if path.startswith("/api/"):
+            return _error(403, t("errors.local_only"))
+        # No link to the interface: from there, it would only lead to this page again
+        return HTMLResponse(render_page(t("denied.title"), t("denied.text"), link=False), status_code=403)
 
     @app.middleware("http")
     async def security_headers(request: Request, call_next: Callable[[Request], Awaitable[Response]]) -> Response:
@@ -570,6 +635,8 @@ def create_app(
             api_enabled=api_enabled(),
             api_forced=settings.api_enabled is not None,
             mdns=auth.mdns,
+            local_only=local_only(),
+            local_only_forced=settings.local_only is not None,
         )
 
     @app.get("/api/settings")
@@ -580,9 +647,13 @@ def create_app(
     def put_settings(body: SettingsIn) -> Response | SettingsOut:
         if settings.api_enabled is not None and body.api_enabled != settings.api_enabled:
             return _error(409, t("errors.api_forced"))
+        if settings.local_only is not None and body.local_only not in (None, settings.local_only):
+            return _error(409, t("errors.local_only_forced"))
         values = {HOSTNAME: body.hostname, HOSTNAME_ENABLED: "1" if body.hostname_enabled else "0"}
         if settings.api_enabled is None:
             values[API_ENABLED] = "1" if body.api_enabled else "0"
+        if settings.local_only is None and body.local_only is not None:
+            values[LOCAL_ONLY] = "1" if body.local_only else "0"
         db.set_settings(values)
         name_changed = (body.hostname, body.hostname_enabled) != (auth.hostname, auth.hostname_enabled)
         auth.hostname, auth.hostname_enabled = body.hostname, body.hostname_enabled
@@ -590,6 +661,8 @@ def create_app(
             auth.mdns = mdns.announce(announced_name())
         if settings.api_enabled is None:
             auth.api_enabled = body.api_enabled
+        if settings.local_only is None and body.local_only is not None:
+            auth.local_only = body.local_only
         logger.info(
             "settings: hostname %s (%s), API %s",
             body.hostname,

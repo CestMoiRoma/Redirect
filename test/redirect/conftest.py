@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
-from support import PUBLIC_BASE_URL, FakeAnnouncer, FrozenClock
+from support import LOCAL_CLIENT, PUBLIC_BASE_URL, FakeAnnouncer, FrozenClock
 
 import redirect.db
 from redirect.config import Settings
@@ -30,6 +30,7 @@ def make_client(tmp_path: Path, clock: FrozenClock) -> Iterator[Callable[..., Te
         admin_password: str | None = None,
         new_key: Callable[[], str] | None = None,
         api_enabled: bool | None = None,
+        local_only: bool | None = None,
         port: int = 80,
         **client_options: object,
     ) -> TestClient:
@@ -39,13 +40,14 @@ def make_client(tmp_path: Path, clock: FrozenClock) -> Iterator[Callable[..., Te
             public_base_url=public_base_url,
             admin_password=admin_password,
             api_enabled=api_enabled,
+            local_only=local_only,
         )
         announcer = FakeAnnouncer()
         # Predictable ids, in creation order, shared by every app of the test (they use the same database)
         extra = {} if new_key is None else {"new_key": new_key}
         app = create_app(settings, clock, announcer=announcer, make_code=lambda: next(ids), **extra)
         app.state.announcer = announcer
-        client = TestClient(app, **client_options)
+        client = TestClient(app, **{"client": LOCAL_CLIENT, **client_options})
         client.__enter__()
         clients.append(client)
         return client

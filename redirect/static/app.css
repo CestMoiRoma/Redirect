@@ -950,7 +950,8 @@ input:disabled {
 
 .key-card .note,
 .key-card .form-error,
-.api-off {
+.api-off,
+.access-help {
   margin-top: 12px;
 }
 

@@ -3,7 +3,7 @@
 
 import pytest
 from fastapi.testclient import TestClient
-from support import PUBLIC_BASE_URL, create
+from support import LOCAL_CLIENT, PUBLIC_BASE_URL, create
 
 from redirect.config import Settings
 
@@ -15,6 +15,8 @@ DEFAULTS = {
     "api_enabled": False,
     "api_forced": False,
     "mdns": False,
+    "local_only": True,
+    "local_only_forced": False,
 }
 HOSTNAME_INVALID = "Use a hostname such as redirect.lan: letters, digits and dashes, with dots between the parts."
 API_DISABLED = {"detail": "The API is turned off. Turn it on in the interface, or with API_ENABLED.", "errors": {}}
@@ -174,7 +176,7 @@ def test_turning_the_api_on_and_off(admin):
     assert put(admin, api_enabled=True).json()["api_enabled"] is True
     key = admin.post("/api/key").json()["key"]
     # The same running app, seen from a script: no session cookie
-    script = TestClient(admin.app)
+    script = TestClient(admin.app, client=LOCAL_CLIENT)
     headers = {"Authorization": f"Bearer {key}"}
     assert script.get("/api/redirects", headers=headers).status_code == 200
     put(admin, api_enabled=False)

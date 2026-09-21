@@ -4,7 +4,7 @@ import sqlite3
 
 import pytest
 from fastapi.testclient import TestClient
-from support import create
+from support import LOCAL_CLIENT, create
 
 from redirect.config import Settings
 
@@ -38,7 +38,7 @@ def test_visits_are_logged_with_the_client(client):
     assert (path["action"], path["source"], path["path"], path["status"]) == ("visit", "link", "/redirect/wiki", 302)
     assert (short["path"], short["status"]) == (f"/links/{wiki['id']}", 302)
     assert (nope["path"], nope["status"]) == ("/redirect/nope", 404)
-    assert path["client"] == "testclient"
+    assert path["client"] == "127.0.0.1"
     assert path["user_agent"] == "TestBrowser/1.0"
     assert path["at"] == "2026-01-15T09:30:00Z"
     assert created["action"] == "create"
@@ -73,7 +73,7 @@ def test_scripts_are_logged_as_api(make_client):
     admin = make_client(admin_password=PASSWORD, api_enabled=True)
     admin.post("/api/login", json={"password": PASSWORD})
     key = admin.post("/api/key").json()["key"]
-    script = TestClient(admin.app, headers={"Authorization": f"Bearer {key}"})
+    script = TestClient(admin.app, client=LOCAL_CLIENT, headers={"Authorization": f"Bearer {key}"})
     created = script.post("/api/redirects", json={"slug": "wiki", "name": "Wiki", "target": "http://w/"}).json()
     script.get("/api/list")
     script.get("/api/logs", params={"limit": 1})

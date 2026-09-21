@@ -286,6 +286,18 @@
           </form>
         </section>
 
+        <section class="card key-card" id="access-card" aria-labelledby="access-title">
+          <h2 id="access-title" data-i18n="access.title"></h2>
+          <label class="check">
+            <input type="checkbox" id="access-local-only" />
+            <span data-i18n="access.toggle"></span>
+          </label>
+          <p class="hint access-help" data-i18n="access.help"></p>
+          <p class="note" id="access-forced" hidden></p>
+          <p class="note note-warn" id="access-off" data-i18n="access.off" hidden></p>
+          <p class="form-error" id="access-error" role="alert" hidden></p>
+        </section>
+
         <!-- Shown when a login is required: without one, the API is open anyway -->
         <section class="card key-card" id="key-card" aria-labelledby="key-title" hidden>
           <h2 id="key-title" data-i18n="api.title"></h2>

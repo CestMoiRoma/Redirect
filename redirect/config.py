@@ -26,6 +26,8 @@ class Settings:
     admin_password: str | None = field(default=None, repr=False)
     # None: the interface switches the scripts' API on and off. True or False: forced by API_ENABLED.
     api_enabled: bool | None = None
+    # None: the interface decides (local only, at first). True or False: forced by LOCAL_ONLY.
+    local_only: bool | None = None
     # Events older than this are purged from the log
     log_retention_days: int = DEFAULT_LOG_RETENTION_DAYS
 
@@ -59,6 +61,9 @@ class Settings:
         api_raw = env.get("API_ENABLED", "").strip().lower()
         if api_raw and api_raw not in _TRUE + _FALSE:
             raise ValueError(f"API_ENABLED must be true or false, got {env['API_ENABLED']!r}")
+        local_raw = env.get("LOCAL_ONLY", "").strip().lower()
+        if local_raw and local_raw not in _TRUE + _FALSE:
+            raise ValueError(f"LOCAL_ONLY must be true or false, got {env['LOCAL_ONLY']!r}")
         return cls(
             port=port,
             data_dir=Path(env.get("DATA_DIR", "").strip() or DEFAULT_DATA_DIR),
@@ -66,5 +71,6 @@ class Settings:
             log_level=level_raw.upper(),
             admin_password=password or None,
             api_enabled=(api_raw in _TRUE) if api_raw else None,
+            local_only=(local_raw in _TRUE) if local_raw else None,
             log_retention_days=int(retention_raw),
         )

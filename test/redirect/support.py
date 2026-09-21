@@ -6,6 +6,8 @@ from fastapi.testclient import TestClient
 
 START = datetime(2026, 1, 15, 9, 30, 0, tzinfo=UTC)
 PUBLIC_BASE_URL = "http://redirect.local:8080"
+# The address of the test clients: on the local network, like a browser of the LAN
+LOCAL_CLIENT = ("127.0.0.1", 50000)
 
 
 class FrozenClock:

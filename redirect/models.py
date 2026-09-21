@@ -263,6 +263,8 @@ class SettingsIn(BaseModel):
     hostname: str
     hostname_enabled: bool
     api_enabled: bool
+    # Left out: unchanged
+    local_only: bool | None = None
 
     @field_validator("hostname")
     @classmethod
@@ -282,6 +284,9 @@ class SettingsOut(BaseModel):
     api_forced: bool
     # True while the hostname, ending in .local, is announced on the LAN (mDNS)
     mdns: bool
+    # The interface and the API only answer on the local network; forced when LOCAL_ONLY sets it
+    local_only: bool
+    local_only_forced: bool
 
 
 class EventOut(BaseModel):

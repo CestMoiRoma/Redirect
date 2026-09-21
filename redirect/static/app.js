@@ -630,6 +630,15 @@
     forced.hidden = !settings.api_forced
     $('#api-off').hidden = settings.api_enabled
     $('#key-section').hidden = !settings.api_enabled
+
+    const localOnly = $('#access-local-only')
+    localOnly.checked = settings.local_only
+    localOnly.disabled = settings.local_only_forced
+    const accessForced = $('#access-forced')
+    const accessText = settings.local_only ? t('access.forced_on') : t('access.forced_off')
+    accessForced.textContent = settings.local_only_forced ? accessText : ''
+    accessForced.hidden = !settings.local_only_forced
+    $('#access-off').hidden = settings.local_only
   }
 
   function saveSettings(values) {
@@ -676,6 +685,25 @@
       } finally {
         submit.disabled = false
         if (document.activeElement === document.body) submit.focus()
+      }
+    })
+
+    $('#access-local-only').addEventListener('change', async (event) => {
+      const toggle = event.target
+      const accessError = $('#access-error')
+      accessError.hidden = true
+      toggle.disabled = true
+      try {
+        await saveSettings({ local_only: toggle.checked })
+      } catch (error) {
+        if (!(error instanceof ApiError)) throw error
+        if (error.status === 401) return
+        toggle.checked = !toggle.checked
+        accessError.textContent = error.message
+        accessError.hidden = false
+      } finally {
+        toggle.disabled = state.settings.local_only_forced
+        toggle.focus()
       }
     })
 

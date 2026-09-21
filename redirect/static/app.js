@@ -15,6 +15,7 @@
     deleting: null,
     loginRequired: false,
     keyExists: false,
+    settings: null, // as last saved on the server
   }
 
   const $ = (selector, root = document) => root.querySelector(selector)
@@ -476,6 +477,111 @@
     })
   }
 
+  // --- Settings: hostname of the links, scripts' API ------------------------------------------------------
+
+  function setSettingsError(message) {
+    const input = $('#settings-hostname')
+    const slot = $('#settings-hostname-error')
+    slot.textContent = message || ''
+    slot.hidden = !message
+    if (message) input.setAttribute('aria-invalid', 'true')
+    else input.removeAttribute('aria-invalid')
+  }
+
+  function renderSettings(settings) {
+    state.settings = settings
+    const form = $('#settings-form')
+    form.elements.hostname.value = settings.hostname
+    form.elements.hostname_enabled.checked = settings.hostname_enabled
+    form.elements.hostname.disabled = !settings.hostname_enabled
+    const mdns = $('#settings-mdns')
+    mdns.textContent = settings.mdns ? t('settings.mdns', { hostname: settings.hostname }) : ''
+    mdns.hidden = !settings.mdns
+    const override = $('#settings-public-base-url')
+    override.textContent = settings.public_base_url
+      ? t('settings.public_base_url', { url: settings.public_base_url })
+      : ''
+    override.hidden = !settings.public_base_url
+
+    const toggle = $('#api-enabled')
+    toggle.checked = settings.api_enabled
+    toggle.disabled = settings.api_forced
+    const forced = $('#api-forced')
+    const forcedText = settings.api_enabled ? t('api.forced_on') : t('api.forced_off')
+    forced.textContent = settings.api_forced ? forcedText : ''
+    forced.hidden = !settings.api_forced
+    $('#api-off').hidden = settings.api_enabled
+    $('#key-section').hidden = !settings.api_enabled
+  }
+
+  function saveSettings(values) {
+    return api('PUT', '/api/settings', { ...state.settings, ...values }).then((saved) => {
+      renderSettings(saved)
+      return saved
+    })
+  }
+
+  function setupSettings() {
+    const form = $('#settings-form')
+    form.elements.hostname_enabled.addEventListener('change', (event) => {
+      form.elements.hostname.disabled = !event.target.checked
+      $('#settings-saved').textContent = ''
+    })
+    form.elements.hostname.addEventListener('input', () => {
+      $('#settings-saved').textContent = ''
+    })
+    form.addEventListener('submit', async (event) => {
+      event.preventDefault()
+      const submit = $('[type="submit"]', form)
+      const formError = $('.form-error', form)
+      submit.disabled = true
+      setSettingsError(null)
+      formError.hidden = true
+      $('#settings-saved').textContent = ''
+      try {
+        await saveSettings({
+          hostname: form.elements.hostname.value,
+          hostname_enabled: form.elements.hostname_enabled.checked,
+        })
+        $('#settings-saved').textContent = t('settings.saved')
+        await reload() // every link follows the new hostname
+      } catch (error) {
+        if (!(error instanceof ApiError)) throw error
+        if (error.status === 401) return
+        if (error.errors.hostname) {
+          setSettingsError(error.errors.hostname)
+          form.elements.hostname.focus()
+        } else {
+          formError.textContent = error.message
+          formError.hidden = false
+        }
+      } finally {
+        submit.disabled = false
+        if (document.activeElement === document.body) submit.focus()
+      }
+    })
+
+    $('#api-enabled').addEventListener('change', async (event) => {
+      const toggle = event.target
+      const apiError = $('#api-error')
+      apiError.hidden = true
+      toggle.disabled = true
+      try {
+        const saved = await saveSettings({ api_enabled: toggle.checked })
+        if (saved.api_enabled) renderKey(await api('GET', '/api/key'))
+      } catch (error) {
+        if (!(error instanceof ApiError)) throw error
+        if (error.status === 401) return
+        toggle.checked = !toggle.checked
+        apiError.textContent = error.message
+        apiError.hidden = false
+      } finally {
+        toggle.disabled = state.settings.api_forced
+        toggle.focus()
+      }
+    })
+  }
+
   // --- Start ------------------------------------------------------------------------------------------
 
   function showLoadError() {
@@ -492,7 +598,8 @@
     $('#key-card').hidden = !state.loginRequired
     try {
       await reload()
-      if (state.loginRequired) renderKey(await api('GET', '/api/key'))
+      renderSettings(await api('GET', '/api/settings'))
+      if (state.loginRequired && state.settings.api_enabled) renderKey(await api('GET', '/api/key'))
       $('#main').hidden = false
     } catch (error) {
       if (error instanceof ApiError && error.status === 401) return // the login screen is shown
@@ -546,6 +653,7 @@
     setupDelete()
     setupLogin()
     setupKey()
+    setupSettings()
     await start()
   }
 

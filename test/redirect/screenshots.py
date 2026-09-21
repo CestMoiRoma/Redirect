@@ -1,7 +1,7 @@
 """End-to-end scenario on the real app + GUI goldens. Usage: screenshots.py OUT_DIR
 
-Starts the real app in-process on a free port (a copy of fixtures/redirect.db, PUBLIC_BASE_URL fixed so the
-links on screen are stable) and a small local target server, then walks every screen and state of the UI in
+Starts the real app in-process on a free port (a copy of fixtures/redirect.db; links on the default hostname,
+redirect.lan, so they are stable) and a small local target server, then walks every screen and state of the UI in
 headless Chromium, at two viewports. Fails on any page error, unexpected console error, unexpected request
 or missing element. Every capture goes through golden.py.
 """
@@ -27,12 +27,15 @@ import golden  # noqa: E402
 import uvicorn  # noqa: E402
 from playwright.sync_api import Page, expect, sync_playwright  # noqa: E402
 
+from support import FakeAnnouncer  # noqa: E402
+
 from redirect.config import Settings  # noqa: E402
 from redirect.main import create_app  # noqa: E402
 
 FIXTURE_DB = HERE / "fixtures" / "redirect.db"
-PUBLIC_BASE_URL = "http://redirect.local:8080"
-PREFIX = f"{PUBLIC_BASE_URL}/redirect/"
+# The links use the default hostname, redirect.lan, on port 80: the router below answers for it
+LINKS_BASE = "http://redirect.lan"
+PREFIX = f"{LINKS_BASE}/redirect/"
 # Hosts of the targets the scenario follows; Chromium resolves them to the local target server
 TARGET_DOMAIN = "intranet.local"
 TIMEOUT_MS = 20_000
@@ -65,11 +68,14 @@ SHOTS = (
     "21-edit-gone",
     "22-login",
     "23-login-error",
-    "24-key-none",
+    "24-api-off",
     "25-key-new",
     "26-key-regenerate",
     "27-key-set",
     "28-open-mode",
+    "29-hostname-error",
+    "30-hostname-mdns",
+    "31-environment",
 )
 
 # Web fonts each kind of page must have loaded (and so rendered with) when captured
@@ -120,17 +126,25 @@ TARGET_PAGE = """<!doctype html>
 
 
 @contextmanager
-def app_server(data_dir: Path, password: str | None = ADMIN_PASSWORD) -> Iterator[str]:
-    """The real app, in this process, on a free port. Backend clock frozen at the golden time, fixed API keys."""
+def app_server(
+    data_dir: Path,
+    password: str | None = ADMIN_PASSWORD,
+    public_base_url: str | None = None,
+    api_enabled: bool | None = None,
+) -> Iterator[str]:
+    """The real app, in this process, on a free port. Backend clock frozen at the golden time, fixed API keys,
+    and an mDNS announcer that stays off the network."""
     settings = Settings(
         data_dir=data_dir,
-        public_base_url=PUBLIC_BASE_URL,
+        public_base_url=public_base_url,
         log_level="WARNING",
         admin_password=password,
-        api_enabled=True,
+        api_enabled=api_enabled,
     )
     bodies = itertools.cycle(KEY_BODIES)
-    app = create_app(settings, clock=lambda: golden.GOLDEN_TIME, new_key=lambda: next(bodies))
+    app = create_app(
+        settings, clock=lambda: golden.GOLDEN_TIME, new_key=lambda: next(bodies), announcer=FakeAnnouncer()
+    )
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     sock.bind(("127.0.0.1", 0))
     port = sock.getsockname()[1]
@@ -279,7 +293,7 @@ class Scenario:
             origin = f"{url.scheme}://{url.netloc}"
             if origin == base or (url.hostname or "").endswith("." + TARGET_DOMAIN):
                 route.continue_()
-            elif origin == PUBLIC_BASE_URL:
+            elif origin == LINKS_BASE:
                 # The public host does not resolve: answer from the real app, redirects left to the browser
                 path = url.path + (f"?{url.query}" if url.query else "")
                 response = route.fetch(url=base + path, max_redirects=0)
@@ -420,7 +434,7 @@ def main_walk(run: Scenario, data_dir: Path) -> None:
         for query, rows in (
             ("10.12.75", FIXTURE_ROWS[1:2]),
             ("COMPTA/", FIXTURE_ROWS[:1]),
-            ("redirect.local", FIXTURE_ROWS),
+            ("redirect.lan", FIXTURE_ROWS),
         ):
             search.fill(query)
             expect_rows(page, rows)
@@ -613,7 +627,7 @@ def main_walk(run: Scenario, data_dir: Path) -> None:
 
         # --- Copy over plain http (a LAN address): no Clipboard API, the execCommand fallback copies
         lan = page.context.new_page()
-        lan.goto(PUBLIC_BASE_URL + "/")
+        lan.goto(LINKS_BASE + "/")
         # No login here: the router answers for the public host with route.fetch, whose requests to the real
         # app carry this context's session cookie
         expect(lan.locator("#main")).to_be_visible()
@@ -822,15 +836,27 @@ def auth_walk(run: Scenario, data_dir: Path) -> None:
         expect(view).to_be_hidden()
         expect_rows(page, FIXTURE_ROWS)
 
-        # --- No key yet
+        # --- The API is off by default: scripts are refused, no key to manage
         card = page.locator("#key-card")
         state = card.locator("#key-state")
-        expect(card.get_by_role("heading", level=2)).to_have_text("API key")
-        expect(card.locator(".hint")).to_have_text(
+        toggle = card.get_by_label("Let scripts use the API")
+        expect(card.get_by_role("heading", level=2)).to_have_text("API")
+        expect(toggle).not_to_be_checked()
+        expect(toggle).to_be_enabled()
+        expect(card.locator("#api-off")).to_have_text("Scripts are refused while the API is off.")
+        expect(card.locator("#key-section")).to_be_hidden()
+        expect(card.locator("#api-forced")).to_be_hidden()
+        run.shot(page, "24-api-off")
+
+        # --- Turn it on: no key yet
+        toggle.check()
+        expect(card.locator("#key-section")).to_be_visible()
+        expect(card.locator("#api-off")).to_be_hidden()
+        expect(card.locator("#key-section .hint")).to_have_text(
             "Scripts send it as Authorization: Bearer <key> to /api/redirects, to create, change or delete redirects."
         )
         expect(state).to_have_text("No API key yet.")
-        run.shot(page, "24-key-none")
+        expect(toggle).to_be_focused()
 
         # --- Generate: the key is shown once, copied, then gone from the page
         card.get_by_role("button", name="Generate a key").click()
@@ -883,8 +909,18 @@ def auth_walk(run: Scenario, data_dir: Path) -> None:
         expect(state).to_have_text("Created on 2026-01-15. It starts with rdk_M4nP…")
         assert script.request.get(api, headers={"Authorization": f"Bearer {FIRST_KEY}"}).status == 401
         assert script.request.get(api, headers={"Authorization": f"Bearer {SECOND_KEY}"}).status == 200
-        script.close()
         run.shot(page, "27-key-set")
+
+        # --- Turn the API off: the key is refused, the interface keeps working; then on again
+        toggle.uncheck()
+        expect(card.locator("#key-section")).to_be_hidden()
+        assert script.request.get(api, headers={"Authorization": f"Bearer {SECOND_KEY}"}).status == 403
+        toggle.check()
+        # Shown again once the server has saved the change
+        expect(card.locator("#key-section")).to_be_visible()
+        expect(state).to_have_text("Created on 2026-01-15. It starts with rdk_M4nP…")
+        assert script.request.get(api, headers={"Authorization": f"Bearer {SECOND_KEY}"}).status == 200
+        script.close()
 
         # --- Log out: back to the login screen, for good
         page.get_by_role("button", name="Log out").click()
@@ -907,6 +943,87 @@ def auth_walk(run: Scenario, data_dir: Path) -> None:
         expect(page.locator("#main")).to_be_hidden()
         log_in(page)
         expect_rows(page, FIXTURE_ROWS)
+        page.context.close()
+
+
+def settings_walk(run: Scenario, data_dir: Path) -> None:
+    """The hostname of the links: defaults, an invalid name, a .local name announced, turned off."""
+    shutil.copyfile(FIXTURE_DB, data_dir / "redirect.db")
+    with app_server(data_dir) as base:
+        page = run.open(base)
+        page.goto(base + "/")
+        log_in(page)
+        card = page.locator("#settings-card")
+        enabled = card.get_by_label("Use a hostname in the links")
+        hostname = card.get_by_label("Hostname", exact=True)
+        save = card.get_by_role("button", name="Save")
+        expect(card.get_by_role("heading", level=2)).to_have_text("Links")
+        expect(enabled).to_be_checked()
+        expect(hostname).to_have_value("redirect.lan")
+        expect(card.locator("#settings-hostname-hint")).to_have_text(
+            "Point this name at Redirect's address in your router or local DNS."
+            " A name ending in .local needs no DNS: Redirect announces it on the network."
+        )
+        expect(card.locator("#settings-mdns")).to_be_hidden()
+        expect(card.locator("#settings-public-base-url")).to_be_hidden()
+        expect_rows(page, FIXTURE_ROWS)
+
+        # --- An invalid name: the error is under the field, nothing changes
+        hostname.fill("bad_name")
+        with run.watch.http_error(page, base + "/api/settings", 422):
+            save.click()
+            expect(card.locator("#settings-hostname-error")).to_have_text(
+                "Use a hostname such as redirect.lan: letters, digits and dashes, with dots between the parts."
+            )
+        expect(hostname).to_have_attribute("aria-invalid", "true")
+        expect(hostname).to_be_focused()
+        expect(card.locator("#settings-saved")).to_have_text("")
+        expect_rows(page, FIXTURE_ROWS)
+        run.shot(page, "29-hostname-error")
+
+        # --- A .local name: announced on the network, and every link follows it
+        hostname.fill("redirect.local")
+        save.click()
+        expect(card.locator("#settings-saved")).to_have_text("Saved.")
+        expect(card.locator("#settings-hostname-error")).to_be_hidden()
+        expect(card.locator("#settings-mdns")).to_have_text("Announced on the network as redirect.local.")
+        local = "http://redirect.local/redirect/"
+        expect(page.locator("#list .link").first).to_have_text(local + "compta/budget-2026")
+        expect(page.locator("#create .prefix")).to_have_text(local)
+        run.shot(page, "30-hostname-mdns")
+
+        # --- Turned off: the links follow the address the browser used, the name is no longer announced
+        enabled.uncheck()
+        expect(hostname).to_be_disabled()
+        save.click()
+        expect(card.locator("#settings-saved")).to_have_text("Saved.")
+        expect(card.locator("#settings-mdns")).to_be_hidden()
+        expect(page.locator("#create .prefix")).to_have_text(base + "/redirect/")
+        enabled.check()
+        hostname.fill("redirect.lan")
+        save.click()
+        expect(page.locator("#create .prefix")).to_have_text(PREFIX)
+        page.context.close()
+
+
+def environment_walk(run: Scenario, data_dir: Path) -> None:
+    """PUBLIC_BASE_URL and API_ENABLED set in the environment: the interface shows it and cannot change them."""
+    shutil.copyfile(FIXTURE_DB, data_dir / "redirect.db")
+    with app_server(data_dir, public_base_url="https://go.example.org", api_enabled=True) as base:
+        page = run.open(base)
+        page.goto(base + "/")
+        log_in(page)
+        expect(page.locator("#settings-public-base-url")).to_have_text(
+            "PUBLIC_BASE_URL is set in the container's environment: links start with https://go.example.org,"
+            " whatever the hostname."
+        )
+        expect(page.locator("#list .link").first).to_have_text("https://go.example.org/redirect/compta/budget-2026")
+        toggle = page.get_by_label("Let scripts use the API")
+        expect(toggle).to_be_checked()
+        expect(toggle).to_be_disabled()
+        expect(page.locator("#api-forced")).to_have_text("Turned on by API_ENABLED in the container's environment.")
+        expect(page.locator("#key-state")).to_have_text("No API key yet.")
+        run.shot(page, "31-environment")
         page.context.close()
 
 
@@ -946,7 +1063,7 @@ def main(out_dir: Path) -> int:
                 with tempfile.TemporaryDirectory() as empty, tempfile.TemporaryDirectory() as seeded:
                     empty_list(run, Path(empty))
                     main_walk(run, Path(seeded))
-                for walk in (auth_walk, open_mode):
+                for walk in (auth_walk, settings_walk, environment_walk, open_mode):
                     with tempfile.TemporaryDirectory() as data:
                         walk(run, Path(data))
             browser.close()

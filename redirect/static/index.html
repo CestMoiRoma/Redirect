@@ -92,12 +92,44 @@
           </form>
         </section>
 
-        <!-- Shown when a login is required: the key only means something then -->
+        <section class="card settings-card" id="settings-card" aria-labelledby="settings-title">
+          <h2 id="settings-title" data-i18n="settings.title"></h2>
+          <form id="settings-form" class="redirect-form" novalidate>
+            <label class="check">
+              <input type="checkbox" name="hostname_enabled" id="settings-hostname-enabled" />
+              <span data-i18n="settings.hostname.toggle"></span>
+            </label>
+            <div class="field">
+              <label for="settings-hostname" data-i18n="settings.hostname.label"></label>
+              <input id="settings-hostname" name="hostname" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" aria-describedby="settings-hostname-hint settings-hostname-error" />
+              <p class="hint" id="settings-hostname-hint" data-i18n="settings.hostname.hint"></p>
+              <p class="field-error" id="settings-hostname-error" hidden></p>
+            </div>
+            <p class="note note-ok" id="settings-mdns" hidden></p>
+            <p class="note note-warn" id="settings-public-base-url" hidden></p>
+            <p class="form-error" role="alert" hidden></p>
+            <div class="form-actions">
+              <p class="saved" id="settings-saved" role="status"></p>
+              <button type="submit" class="button" data-i18n="settings.save"></button>
+            </div>
+          </form>
+        </section>
+
+        <!-- Shown when a login is required: without one, the API is open anyway -->
         <section class="card key-card" id="key-card" aria-labelledby="key-title" hidden>
-          <h2 id="key-title" data-i18n="key.title"></h2>
-          <p class="hint" data-i18n="key.help"></p>
-          <p class="key-state" id="key-state"></p>
-          <button type="button" class="button" id="key-generate"></button>
+          <h2 id="key-title" data-i18n="api.title"></h2>
+          <label class="check">
+            <input type="checkbox" id="api-enabled" />
+            <span data-i18n="api.toggle"></span>
+          </label>
+          <p class="note" id="api-forced" hidden></p>
+          <p class="form-error" id="api-error" role="alert" hidden></p>
+          <p class="hint api-off" id="api-off" data-i18n="api.off" hidden></p>
+          <div class="key-section" id="key-section" hidden>
+            <p class="hint" data-i18n="key.help"></p>
+            <p class="key-state" id="key-state"></p>
+            <button type="button" class="button" id="key-generate"></button>
+          </div>
         </section>
       </div>
     </main>

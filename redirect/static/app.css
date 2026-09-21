@@ -596,11 +596,81 @@ input[aria-invalid='true'] {
   margin-top: 6px;
 }
 
-/* --- API key ---------------------------------------------------------------------------------------- */
+/* --- Settings and API cards ------------------------------------------------------------------------ */
+
+.check {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.check input {
+  width: 18px;
+  height: 18px;
+  margin: 0;
+  flex: none;
+  accent-color: var(--accent);
+}
+
+.key-card .check {
+  margin-top: 14px;
+}
+
+.check:has(input:disabled) {
+  color: var(--muted);
+  cursor: default;
+}
+
+input:disabled {
+  background: #eef1f5;
+  color: var(--muted);
+}
+
+.note {
+  padding: 8px 12px;
+  border-radius: 8px;
+  background: #eef1f5;
+  color: var(--muted);
+  font-size: 14px;
+  overflow-wrap: anywhere;
+}
+
+.note-ok {
+  background: var(--ok-soft);
+  color: var(--ok);
+}
+
+.note-warn {
+  border: 1px solid var(--warn-border);
+  background: var(--warn-soft);
+  color: var(--warn-text);
+}
+
+.key-card .note,
+.key-card .form-error,
+.api-off {
+  margin-top: 12px;
+}
+
+.saved {
+  margin-right: auto;
+  align-self: center;
+  color: var(--ok);
+  font-size: 14px;
+  font-weight: 600;
+}
 
 .key-card .hint {
   margin-top: 6px;
   overflow-wrap: anywhere;
+}
+
+.key-section {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
 }
 
 .key-state {

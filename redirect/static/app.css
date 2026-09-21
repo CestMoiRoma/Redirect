@@ -497,6 +497,20 @@ input[aria-invalid='true'] {
   border-radius: 0 0 8px 8px;
 }
 
+/* One focus ring around the prefix and the input: on the input alone it would cover the prefix's edge */
+.prefixed {
+  border-radius: 8px;
+}
+
+.prefixed:has(input:focus-visible) {
+  outline: 3px solid var(--focus);
+  outline-offset: 2px;
+}
+
+.prefixed input:focus-visible {
+  outline: none;
+}
+
 .hint {
   color: var(--muted);
   font-size: 13px;

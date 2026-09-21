@@ -77,6 +77,13 @@
 
   // --- Status line ------------------------------------------------------------------------------------
 
+  // The status line tells the outcome of the last action: a new action starts without it
+  function clearStatus() {
+    const status = $('#status')
+    status.textContent = ''
+    status.hidden = true
+  }
+
   function setStatus(message, isError = false) {
     const status = $('#status')
     status.textContent = message
@@ -239,6 +246,7 @@
     const submit = $('[type="submit"]', form)
     submit.disabled = true
     clearErrors(form)
+    clearStatus()
     try {
       await action()
     } catch (error) {
@@ -326,6 +334,7 @@
     confirm.addEventListener('click', async () => {
       const redirect = state.deleting
       confirm.disabled = true
+      clearStatus()
       try {
         await api('DELETE', `/api/redirects/${redirect.id}`)
         setStatus(t('status.deleted', { name: redirect.name }))

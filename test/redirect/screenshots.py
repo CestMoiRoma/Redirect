@@ -654,6 +654,8 @@ def main_walk(run: Scenario, data_dir: Path) -> None:
             submit.click()
             expect(form.locator(".form-error")).to_have_text("Could not reach the server. Try again.")
         expect(form.locator(".form-error")).to_have_attribute("role", "alert")
+        # The status of the previous action ("saved") is gone: it would contradict the error
+        expect(status).to_be_hidden()
         for error in errors.values():
             expect(error).to_be_hidden()
         expect(submit).to_be_enabled()

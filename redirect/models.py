@@ -160,3 +160,32 @@ class ErrorOut(BaseModel):
 
     detail: str
     errors: dict[str, str] = {}
+
+
+class LoginIn(BaseModel):
+    """Body of POST /api/login."""
+
+    password: str
+
+
+class AuthOut(BaseModel):
+    """Body of GET /api/auth: whether a login is required, and whether this browser has a session."""
+
+    login_required: bool
+    logged_in: bool
+
+
+class ApiKeyOut(BaseModel):
+    """Body of GET /api/key: never the key itself, only what tells it apart."""
+
+    exists: bool
+    hint: str | None
+    created_at: str | None
+
+
+class NewApiKeyOut(BaseModel):
+    """Body of POST /api/key: the only response that ever carries the key."""
+
+    key: str
+    hint: str
+    created_at: str

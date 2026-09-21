@@ -19,11 +19,35 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from . import __version__
+from .auth import (
+    API_KEY_CREATED_AT,
+    API_KEY_HASH,
+    API_KEY_HINT,
+    API_KEY_HINT_LENGTH,
+    API_KEY_PREFIX,
+    LOGIN_WINDOW_SECONDS,
+    SESSION_COOKIE,
+    SESSION_SECONDS,
+    SESSION_SECRET,
+    LoginThrottle,
+    api_key_matches,
+    bearer_token,
+    check_password,
+    hash_api_key,
+    make_session,
+    new_api_key_body,
+    new_secret,
+    session_is_valid,
+)
 from .config import Settings
-from .db import Clock, Database, Redirect, SlugTakenError, utc_now
+from .db import Clock, Database, Redirect, SlugTakenError, timestamp, utc_now
 from .models import (
     REDIRECT_PREFIX,
+    ApiKeyOut,
+    AuthOut,
     ErrorOut,
+    LoginIn,
+    NewApiKeyOut,
     RedirectIn,
     RedirectList,
     RedirectOut,
@@ -193,7 +217,27 @@ class BodySizeLimit:
         await self.app(scope, counting_receive, send)
 
 
-def create_app(settings: Settings | None = None, clock: Clock = utc_now) -> FastAPI:
+def _is_redirects_api(path: str) -> bool:
+    return path == "/api/redirects" or path.startswith("/api/redirects/")
+
+
+def _unauthorized(message: str) -> JSONResponse:
+    response = _error(401, message)
+    response.headers["WWW-Authenticate"] = "Bearer"
+    return response
+
+
+class _AuthState:
+    """Loaded at startup, then kept in memory: checked on every API call without a database round trip."""
+
+    session_secret = ""
+    api_key_hash: str | None = None
+
+
+def create_app(
+    settings: Settings | None = None, clock: Clock = utc_now, new_key: Callable[[], str] = new_api_key_body
+) -> FastAPI:
+    """The app. `clock` and `new_key` are injected so tests and screenshots can freeze time and keys."""
     settings = settings or Settings.from_env()
     if settings.public_base_url is not None:
         try:
@@ -204,10 +248,17 @@ def create_app(settings: Settings | None = None, clock: Clock = utc_now) -> Fast
             ) from None
     configure_logging(settings.log_level)
     db = Database(settings.db_path, clock)
+    password = settings.admin_password
+    auth = _AuthState()
+    throttle = LoginThrottle()
 
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         db.migrate()
+        auth.session_secret = db.setting_or_create(SESSION_SECRET, new_secret)
+        auth.api_key_hash = db.setting(API_KEY_HASH)
+        if password is None:
+            logger.warning("ADMIN_PASSWORD is not set: anyone who can reach Redirect can change its redirects")
         logger.info("Redirect %s ready, database %s", __version__, settings.db_path)
         yield
         logger.info("Redirect stopped")
@@ -222,11 +273,34 @@ def create_app(settings: Settings | None = None, clock: Clock = utc_now) -> Fast
     )
     app.state.settings = settings
     app.state.db = db
+    app.state.throttle = throttle
     app.add_exception_handler(RequestValidationError, _validation_error)
     app.add_exception_handler(sqlite3.Error, _database_error)
     app.add_exception_handler(StarletteHTTPException, _http_error)
-    # Added before security_headers, so it runs inside it: a 413 carries the security headers too
+    # Added before the two middlewares below, so it runs inside them: a 413 carries the security headers too
     app.add_middleware(BodySizeLimit)
+
+    def logged_in(request: Request) -> bool:
+        token = request.cookies.get(SESSION_COOKIE)
+        if password is None or token is None:
+            return False
+        return session_is_valid(token, auth.session_secret, password, clock().timestamp())
+
+    @app.middleware("http")
+    async def require_login(request: Request, call_next: Callable[[Request], Awaitable[Response]]) -> Response:
+        """With a password, the redirects API needs the admin session or the API key; the key API, the session."""
+        path = _route_path(request)
+        if password is None or logged_in(request):
+            return await call_next(request)
+        if path == "/api/key":
+            return _unauthorized(t("errors.session_required"))
+        if _is_redirects_api(path):
+            key = bearer_token(request.headers.get("authorization", ""))
+            if key is None:
+                return _unauthorized(t("errors.login_required"))
+            if not api_key_matches(key, auth.api_key_hash):
+                return _unauthorized(t("errors.api_key_invalid"))
+        return await call_next(request)
 
     @app.middleware("http")
     async def security_headers(request: Request, call_next: Callable[[Request], Awaitable[Response]]) -> Response:
@@ -274,6 +348,71 @@ def create_app(settings: Settings | None = None, clock: Clock = utc_now) -> Fast
             logger.exception("Health check failed")
             return JSONResponse({"status": "unavailable"}, status_code=503)
         return JSONResponse({"status": "ok"})
+
+    @app.get("/api/auth")
+    def auth_status(request: Request) -> AuthOut:
+        return AuthOut(login_required=password is not None, logged_in=logged_in(request))
+
+    @app.post("/api/login", status_code=204, responses={401: {"model": ErrorOut}, 429: {"model": ErrorOut}})
+    def login(body: LoginIn, request: Request) -> Response:
+        if password is None:
+            return Response(status_code=204)
+        client = request.client.host if request.client else "unknown"
+        if throttle.blocked(client):
+            logger.warning("login refused for %s: too many failed attempts", client)
+            refused = _error(429, t("errors.too_many_attempts"))
+            refused.headers["Retry-After"] = str(LOGIN_WINDOW_SECONDS)
+            return refused
+        if not check_password(body.password, password):
+            throttle.failed(client)
+            logger.warning("failed login from %s", client)
+            return _error(401, t("errors.password_wrong"))
+        throttle.succeeded(client)
+        logger.info("login from %s", client)
+        response = Response(status_code=204)
+        response.set_cookie(
+            SESSION_COOKIE,
+            make_session(auth.session_secret, password, clock().timestamp()),
+            max_age=SESSION_SECONDS,
+            path="/",
+            httponly=True,
+            samesite="strict",
+            secure=request.url.scheme == "https",
+        )
+        return response
+
+    @app.post("/api/logout", status_code=204)
+    def logout() -> Response:
+        response = Response(status_code=204)
+        response.delete_cookie(SESSION_COOKIE, path="/", httponly=True, samesite="strict")
+        return response
+
+    def key_disabled() -> JSONResponse | None:
+        # Without a password the API is open: a key would protect nothing, and one planted now would outlive
+        # the day a password is set
+        return _error(409, t("errors.key_needs_password")) if password is None else None
+
+    @app.get("/api/key", response_model=ApiKeyOut, responses={409: {"model": ErrorOut}})
+    def api_key_status() -> Response | ApiKeyOut:
+        if (disabled := key_disabled()) is not None:
+            return disabled
+        hint = db.setting(API_KEY_HINT)
+        return ApiKeyOut(exists=hint is not None, hint=hint, created_at=db.setting(API_KEY_CREATED_AT))
+
+    @app.post("/api/key", status_code=201, response_model=NewApiKeyOut, responses={409: {"model": ErrorOut}})
+    def regenerate_api_key(response: Response) -> Response | NewApiKeyOut:
+        if (disabled := key_disabled()) is not None:
+            return disabled
+        key = API_KEY_PREFIX + new_key()
+        hint = key[:API_KEY_HINT_LENGTH]
+        created_at = timestamp(clock())
+        key_hash = hash_api_key(key)
+        db.set_settings({API_KEY_HASH: key_hash, API_KEY_HINT: hint, API_KEY_CREATED_AT: created_at})
+        auth.api_key_hash = key_hash
+        logger.info("API key regenerated, it starts with %s", hint)
+        # The only response that ever carries the key: no cache may keep it
+        response.headers["Cache-Control"] = "no-store"
+        return NewApiKeyOut(key=key, hint=hint, created_at=created_at)
 
     @app.get("/api/redirects")
     def list_redirects(request: Request) -> RedirectList:

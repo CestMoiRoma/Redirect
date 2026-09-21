@@ -23,9 +23,15 @@ def make_client(tmp_path: Path, clock: FrozenClock) -> Iterator[Callable[..., Te
     """Factory: a started TestClient (lifespan run, database migrated) on tmp_path, closed after the test."""
     clients: list[TestClient] = []
 
-    def make(public_base_url: str | None = None, **client_options: object) -> TestClient:
-        settings = Settings(data_dir=tmp_path / "data", public_base_url=public_base_url)
-        client = TestClient(create_app(settings, clock), **client_options)
+    def make(
+        public_base_url: str | None = None,
+        admin_password: str | None = None,
+        new_key: Callable[[], str] | None = None,
+        **client_options: object,
+    ) -> TestClient:
+        settings = Settings(data_dir=tmp_path / "data", public_base_url=public_base_url, admin_password=admin_password)
+        app = create_app(settings, clock) if new_key is None else create_app(settings, clock, new_key)
+        client = TestClient(app, **client_options)
         client.__enter__()
         clients.append(client)
         return client

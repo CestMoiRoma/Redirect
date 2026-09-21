@@ -21,6 +21,13 @@ MIGRATIONS: tuple[str, ...] = (
         updated_at TEXT    NOT NULL
     )
     """,
+    # Server-side values that must survive a restart: the session secret, the API key's hash
+    """
+    CREATE TABLE settings (
+        name  TEXT PRIMARY KEY,
+        value TEXT NOT NULL
+    )
+    """,
 )
 
 BUSY_TIMEOUT_SECONDS = 5.0
@@ -51,7 +58,7 @@ def utc_now() -> datetime:
     return datetime.now(UTC)
 
 
-def _timestamp(moment: datetime) -> str:
+def timestamp(moment: datetime) -> str:
     return moment.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
@@ -136,7 +143,7 @@ class Database:
         return str(row["target"]) if row else None
 
     def create(self, slug: str, name: str, target: str) -> Redirect:
-        now = _timestamp(self.clock())
+        now = timestamp(self.clock())
         try:
             with self._connect() as conn:
                 cursor = conn.execute(
@@ -153,7 +160,7 @@ class Database:
     def update(self, redirect_id: int, slug: str, name: str, target: str) -> Redirect | None:
         if not _is_possible_id(redirect_id):
             return None
-        now = _timestamp(self.clock())
+        now = timestamp(self.clock())
         try:
             with self._connect() as conn:
                 rows = conn.execute(
@@ -174,3 +181,23 @@ class Database:
             # RETURNING rows are read in full before the commit
             rows = conn.execute(f"DELETE FROM redirects WHERE id = ? RETURNING {_COLUMNS}", (redirect_id,)).fetchall()
         return _row(rows[0]) if rows else None
+
+    def setting(self, name: str) -> str | None:
+        with self._connect() as conn:
+            row = conn.execute("SELECT value FROM settings WHERE name = ?", (name,)).fetchone()
+        return str(row["value"]) if row else None
+
+    def setting_or_create(self, name: str, make: Callable[[], str]) -> str:
+        """The stored value, or `make()` stored now. Two processes starting together keep the same value."""
+        with self._connect() as conn:
+            conn.execute("INSERT OR IGNORE INTO settings (name, value) VALUES (?, ?)", (name, make()))
+            row = conn.execute("SELECT value FROM settings WHERE name = ?", (name,)).fetchone()
+        return str(row["value"])
+
+    def set_settings(self, values: dict[str, str]) -> None:
+        """Stores several values in one transaction: they change together or not at all."""
+        with self._connect() as conn:
+            conn.executemany(
+                "INSERT INTO settings (name, value) VALUES (?, ?) ON CONFLICT (name) DO UPDATE SET value = excluded.value",
+                values.items(),
+            )

@@ -1,7 +1,7 @@
 """Runtime configuration, read from environment variables only."""
 
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 DEFAULT_PORT = 8080
@@ -9,6 +9,7 @@ DEFAULT_DATA_DIR = "/data"
 DB_FILENAME = "redirect.db"
 # The levels both logging and uvicorn know
 LOG_LEVELS = ("DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL")
+ADMIN_PASSWORD_MIN_LENGTH = 8
 
 
 @dataclass(frozen=True)
@@ -17,6 +18,8 @@ class Settings:
     data_dir: Path = Path(DEFAULT_DATA_DIR)
     public_base_url: str | None = None
     log_level: str = "INFO"
+    # None: no login, the interface and the API are open (a warning says so). Never shown in a repr.
+    admin_password: str | None = field(default=None, repr=False)
 
     @property
     def db_path(self) -> Path:
@@ -36,9 +39,16 @@ class Settings:
         if level_raw.upper() not in LOG_LEVELS:
             raise ValueError(f"LOG_LEVEL must be one of {', '.join(LOG_LEVELS)}, got {level_raw!r}")
         base = env.get("PUBLIC_BASE_URL", "").strip().rstrip("/") or None
+        # Taken as typed (spaces included); only an empty or blank value means "no password"
+        password = env.get("ADMIN_PASSWORD", "")
+        if not password.strip():
+            password = ""
+        elif len(password) < ADMIN_PASSWORD_MIN_LENGTH:
+            raise ValueError(f"ADMIN_PASSWORD must be at least {ADMIN_PASSWORD_MIN_LENGTH} characters long")
         return cls(
             port=port,
             data_dir=Path(env.get("DATA_DIR", "").strip() or DEFAULT_DATA_DIR),
             public_base_url=base,
             log_level=level_raw.upper(),
+            admin_password=password or None,
         )

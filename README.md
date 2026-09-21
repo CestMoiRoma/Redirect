@@ -17,21 +17,25 @@ services:
       - '8080:8080'
     volumes:
       - redirect-data:/data
+    environment:
+      ADMIN_PASSWORD: ''
 
 volumes:
   redirect-data:
 ```
 
-Start it with `docker compose up -d`, or without compose:
+Put a password of 8 characters or more in `ADMIN_PASSWORD`, then start it with `docker compose up -d`, or without compose:
 
 ```sh
-docker run -d --name redirect --restart unless-stopped -p 8080:8080 -v redirect-data:/data ghcr.io/cestmoiroma/redirect:latest
+docker run -d --name redirect --restart unless-stopped -p 8080:8080 -v redirect-data:/data \
+  -e ADMIN_PASSWORD='a long password' ghcr.io/cestmoiroma/redirect:latest
 ```
 
 The interface is then at `http://<host>:8080/` and the links at `http://<host>:8080/redirect/<path>`. The redirects live in a SQLite file, `redirect.db`, in the `redirect-data` volume, so they survive restarts and upgrades. Each release is also tagged with its version, such as `0.1.0`: pin it to upgrade when you choose.
 
 | Variable              | Default         | What it does                                                                                                     |
 | --------------------- | --------------- | ---------------------------------------------------------------------------------------------------------------- |
+| `ADMIN_PASSWORD`      | unset           | Password of the interface, 8 characters or more. Unset, the interface and the API are open to anyone.            |
 | `PORT`                | `8080`          | Port the server listens on inside the container. Publish that port if you change it.                             |
 | `DATA_DIR`            | `/data`         | Folder of `redirect.db`. The server runs as uid 10001, which must be able to write there.                        |
 | `PUBLIC_BASE_URL`     | unset           | Base of the links the interface shows, e.g. `https://go.example.org`. Unset, links follow the browser's address. |
@@ -42,13 +46,46 @@ The interface is then at `http://<host>:8080/` and the links at `http://<host>:8
 
 Set `PUBLIC_BASE_URL` to the address people use, for example `https://go.example.org`. Without it, the links in the interface follow the `Host` header the proxy forwards, and they stay `http://` even when the proxy serves HTTPS: Redirect only trusts `X-Forwarded-Proto` from the loopback. Setting `FORWARDED_ALLOW_IPS` to the proxy's address makes it honour that header. When `PUBLIC_BASE_URL` is set, it always wins.
 
-### Keep it on a trusted network
+### Set a password
 
-Redirect has no authentication: anyone who can reach its port can create, change or delete redirects, and a web page opened on a machine of the same network can reach the API through DNS rebinding. Run it on a network you trust, or put a reverse proxy that requires authentication in front of the interface and the API, and publish the container's port to that proxy only. The links under `/redirect/` are public by nature: anyone who has one can follow it.
+With `ADMIN_PASSWORD`, the interface opens on a login screen. A login lasts 30 days and survives restarts, since its signing secret lives in the volume. Changing the password logs every session out. Five wrong passwords from one address within 15 minutes lock that address out for the rest of the window.
+
+Without it, anyone who can reach the port can create, change or delete redirects, and a web page opened on a machine of the same network can reach the API through DNS rebinding. Every page of the interface says so in red. The links under `/redirect/` are public either way: anyone who has one can follow it.
+
+The password travels as typed. Over plain HTTP, keep Redirect on a network you trust. To reach it from outside, put a reverse proxy serving HTTPS in front of it and publish the container's port to that proxy only.
 
 ## Create a link and change its target later
 
 Open the interface, fill in the path, a name and the target URL under New redirect, then click Create redirect. Copy link on the new entry puts its full public link in the clipboard, ready to share. When the file moves, click Edit on the entry and change the target URL: the link people already have leads to the new target from their next click.
+
+## Change redirects from a script
+
+Scripts use an API key rather than the password. Generate it in the API key card of the interface, under the form: it is shown once, so copy it then. Only its hash is stored, in the volume, so it survives restarts. Regenerate it when it leaks: the old key stops working at once. The key needs `ADMIN_PASSWORD`, since without a password the API is open anyway.
+
+Send it as a bearer token to `/api/redirects`:
+
+```sh
+KEY=rdk_...
+BASE=http://192.168.1.20:8080
+
+# List: every redirect with its id, slug, name, target and public link
+curl -H "Authorization: Bearer $KEY" $BASE/api/redirects
+
+# Create (201)
+curl -H "Authorization: Bearer $KEY" -H 'Content-Type: application/json' \
+  -d '{"slug": "compta/budget-2026", "name": "Budget 2026", "target": "http://files.lan/budget.xlsx"}' \
+  $BASE/api/redirects
+
+# Change the redirect with id 1 (200): send all three fields
+curl -X PUT -H "Authorization: Bearer $KEY" -H 'Content-Type: application/json' \
+  -d '{"slug": "compta/budget-2026", "name": "Budget 2026", "target": "http://files.lan/budget-v2.xlsx"}' \
+  $BASE/api/redirects/1
+
+# Delete it (204)
+curl -X DELETE -H "Authorization: Bearer $KEY" $BASE/api/redirects/1
+```
+
+Errors come back as JSON with a `detail` message and, for invalid fields, one message per field in `errors`: 401 for a missing or wrong key, 404 for an unknown id, 409 for a path already taken, 422 for invalid values. The key only manages redirects: generating a new key takes a login in the interface.
 
 ## Work on the code
 

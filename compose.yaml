@@ -11,15 +11,19 @@ services:
       - '8080:8080'
     volumes:
       - redirect-data:/data
-    # environment:
-    #   # Base of the public links the interface shows and copies. Unset, links follow the address the
-    #   # browser used to reach Redirect, which is right on a LAN. Set it when that address is not the one
-    #   # to share: another published port, a DNS name, or a reverse proxy serving HTTPS.
-    #   PUBLIC_BASE_URL: https://go.example.org
-    #   # Addresses whose X-Forwarded-* headers are trusted (scheme and client IP). The default trusts the
-    #   # loopback only, so a reverse proxy in another container is ignored: links then stay http://.
-    #   # Set it to the proxy's address, or set PUBLIC_BASE_URL above, which always wins.
-    #   FORWARDED_ALLOW_IPS: 172.18.0.2
+    environment:
+      # Admin password, 8 characters or more: the interface asks for it, and it lets you generate the API key
+      # scripts use. Left empty, the interface and the API are open to anyone who can reach them, and every
+      # page says so in red. Changing it logs every session out.
+      ADMIN_PASSWORD: ''
+      # Base of the public links the interface shows and copies. Unset, links follow the address the
+      # browser used to reach Redirect, which is right on a LAN. Set it when that address is not the one
+      # to share: another published port, a DNS name, or a reverse proxy serving HTTPS.
+      # PUBLIC_BASE_URL: https://go.example.org
+      # Addresses whose X-Forwarded-* headers are trusted (scheme and client IP). The default trusts the
+      # loopback only, so a reverse proxy in another container is ignored: links then stay http://.
+      # Set it to the proxy's address, or set PUBLIC_BASE_URL above, which always wins.
+      # FORWARDED_ALLOW_IPS: 172.18.0.2
 
 volumes:
   redirect-data:

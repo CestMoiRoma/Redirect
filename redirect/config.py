@@ -4,7 +4,8 @@ import os
 from dataclasses import dataclass, field
 from pathlib import Path
 
-DEFAULT_PORT = 8080
+# The container is meant to have its own IP on the LAN: links then need no port
+DEFAULT_PORT = 80
 DEFAULT_DATA_DIR = "/data"
 DB_FILENAME = "redirect.db"
 # The levels both logging and uvicorn know

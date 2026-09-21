@@ -71,11 +71,13 @@ state() { # NAME: "status health", e.g. "running healthy" or "running starting"
 
 # Start NAME from the image, hardened as recommended (read-only root, no capability), on the test volume,
 # wait until Docker reports it healthy through the image's own HEALTHCHECK, and set BASE to its URL.
+# The server listens on CONTAINER_PORT: 80 by default, as the image does unless PORT says otherwise.
 start() { # NAME [docker run options]
   local name="$1" waited=0
   shift
   docker run --detach --name "$name" --platform "$PLATFORM" --read-only --cap-drop ALL \
-    --security-opt no-new-privileges --publish 127.0.0.1::8080 --volume "$VOLUME:/data" "$@" "$IMAGE" >/dev/null
+    --security-opt no-new-privileges --publish "127.0.0.1::${CONTAINER_PORT:-80}" --volume "$VOLUME:/data" \
+    "$@" "$IMAGE" >/dev/null
   until [ "$(state "$name")" = "running healthy" ]; do
     case "$(state "$name")" in
       "running starting") ;;
@@ -86,7 +88,7 @@ start() { # NAME [docker run options]
     [ "$waited" -le "$START_TIMEOUT" ] || fail "$name: not healthy after ${START_TIMEOUT}s"
     sleep 1
   done
-  BASE="http://$(docker port "$name" 8080/tcp | head -n 1)"
+  BASE="http://$(docker port "$name" "${CONTAINER_PORT:-80}/tcp" | head -n 1)"
   echo "ok   $name healthy after ${waited}s ($BASE)"
 }
 
@@ -169,8 +171,8 @@ contains "no ADMIN_PASSWORD: the log warns" "$logs" "ADMIN_PASSWORD is not set"
 case "$logs" in *Traceback*) fail "a traceback in the logs" ;; esac
 stop "$RUN_ID-a"
 
-# --- Second run: same volume, as after an upgrade, trusting every proxy -----------------------------------------
-start "$RUN_ID-b" --env 'FORWARDED_ALLOW_IPS=*'
+# --- Second run: same volume, as after an upgrade, on another port, trusting every proxy ---------------------------
+CONTAINER_PORT=8081 start "$RUN_ID-b" --env PORT=8081 --env 'FORWARDED_ALLOW_IPS=*'
 check "GET /redirect/$SLUG after a restart" "$(request "$BASE/redirect/$SLUG")" 302
 check "Location after a restart" "$(header location)" "$TARGET"
 request --header 'X-Forwarded-Proto: https' "$BASE/api/redirects" >/dev/null

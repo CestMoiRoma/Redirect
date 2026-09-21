@@ -1,42 +1,50 @@
 # Redirect
 
-Redirect gives out fixed links and sends each one to a target you can change at any time. Say an Excel file on the local network changes URL from time to time: people receive `http://192.168.1.20:8080/redirect/compta/budget-2026` once, and when the file moves you change the target in Redirect instead of sending a new link. A link answers with an HTTP 302 to its current target, and Redirect never serves or proxies the file itself.
+Redirect gives out fixed links and sends each one to a target you can change at any time. Say an Excel file on the local network changes URL from time to time: people receive `http://192.168.1.20/redirect/compta/budget-2026` once, and when the file moves you change the target in Redirect instead of sending a new link. A link answers with an HTTP 302 to its current target, and Redirect never serves or proxies the file itself.
 
 ![The Redirect interface: the list of redirects and the form to create one](test/screenshot/redirect/02-list.png)
 
 ## Run it with Docker
 
-The image is `ghcr.io/cestmoiroma/redirect`, for `linux/amd64` and `linux/arm64`. The `compose.yaml` of this repository comes down to this:
+The image is `ghcr.io/cestmoiroma/redirect`, for `linux/amd64` and `linux/arm64`. It listens on port 80.
+
+Redirect works best with an address of its own on the LAN: the links are then `http://192.168.1.20/redirect/<path>`, with no port, and nothing else on the Docker host competes for port 80. The `compose.yaml` of this repository gives it one with a macvlan network. That is the setup Redirect is tested with; published ports, the host network and other container runtimes have not been tested.
 
 ```yaml
 services:
   redirect:
     image: ghcr.io/cestmoiroma/redirect:latest
     restart: unless-stopped
-    ports:
-      - '8080:8080'
+    networks:
+      lan:
+        ipv4_address: 192.168.1.20
     volumes:
       - redirect-data:/data
     environment:
       ADMIN_PASSWORD: ''
 
+networks:
+  lan:
+    driver: macvlan
+    driver_opts:
+      parent: eth0
+    ipam:
+      config:
+        - subnet: 192.168.1.0/24
+          gateway: 192.168.1.1
+
 volumes:
   redirect-data:
 ```
 
-Put a password of 8 characters or more in `ADMIN_PASSWORD`, then start it with `docker compose up -d`, or without compose:
+Set `ipv4_address` to a free address outside the range your router's DHCP hands out, `parent` to the host's network interface, and `subnet` and `gateway` to those of your LAN. Put a password of 8 characters or more in `ADMIN_PASSWORD`, then run `docker compose up -d`. With macvlan, the Docker host itself cannot reach the container's address: use Redirect from another machine of the network.
 
-```sh
-docker run -d --name redirect --restart unless-stopped -p 8080:8080 -v redirect-data:/data \
-  -e ADMIN_PASSWORD='a long password' ghcr.io/cestmoiroma/redirect:latest
-```
-
-The interface is then at `http://<host>:8080/` and the links at `http://<host>:8080/redirect/<path>`. The redirects live in a SQLite file, `redirect.db`, in the `redirect-data` volume, so they survive restarts and upgrades. Each release is also tagged with its version, such as `0.1.0`: pin it to upgrade when you choose.
+The interface is then at `http://192.168.1.20/` and the links at `http://192.168.1.20/redirect/<path>`. The redirects live in a SQLite file, `redirect.db`, in the `redirect-data` volume, so they survive restarts and upgrades. Each release is also tagged with its version, such as `0.1.0`: pin it to upgrade when you choose.
 
 | Variable              | Default         | What it does                                                                                                     |
 | --------------------- | --------------- | ---------------------------------------------------------------------------------------------------------------- |
 | `ADMIN_PASSWORD`      | unset           | Password of the interface, 8 characters or more. Unset, the interface and the API are open to anyone.            |
-| `PORT`                | `8080`          | Port the server listens on inside the container. Publish that port if you change it.                             |
+| `PORT`                | `80`            | Port the server listens on. Change it only when port 80 of the container's address is taken.                     |
 | `DATA_DIR`            | `/data`         | Folder of `redirect.db`. The server runs as uid 10001, which must be able to write there.                        |
 | `PUBLIC_BASE_URL`     | unset           | Base of the links the interface shows, e.g. `https://go.example.org`. Unset, links follow the browser's address. |
 | `LOG_LEVEL`           | `INFO`          | `DEBUG`, `INFO`, `WARNING`, `ERROR` or `CRITICAL`.                                                               |
@@ -66,7 +74,7 @@ Send it as a bearer token to `/api/redirects`:
 
 ```sh
 KEY=rdk_...
-BASE=http://192.168.1.20:8080
+BASE=http://192.168.1.20
 
 # List: every redirect with its id, slug, name, target and public link
 curl -H "Authorization: Bearer $KEY" $BASE/api/redirects
@@ -95,7 +103,7 @@ You need `just` and Docker. Lint, tests and screenshots run in a pinned image bu
 - `just lint` runs every formatter and linter in check mode. `just fmt` applies the formatters.
 - `just test redirect` runs pytest, then the end-to-end scenario in Chromium, which rewrites the screenshots.
 - `just ci` runs what CI runs, in the same order, and ends by building and testing the application image. Commit first: the screenshots are compared with `HEAD`.
-- `just image` builds the application image as `redirect:local`. `just up` and `just down` run it with compose.
+- `just image` builds the application image as `redirect:local`. `just up` runs it on `http://localhost:8080` and `just down` stops it.
 
 The screenshots in `test/screenshot/redirect/` must match the commit byte for byte. After an intended UI change, run `just redirect-gui-goldens`, look at every image that changed, and commit them with the change. A new screen goes into `test/redirect/screenshots.py`, and `just gui-goldens-stability redirect 3` proves its captures are stable.
 

@@ -10,7 +10,7 @@ app_image := "redirect:local"
 # uv with Python 3.12, pinned by digest: exports requirements.lock from uv.lock (just app-lock)
 uv_image := "ghcr.io/astral-sh/uv:0.11.16-python3.12-trixie-slim@sha256:438bad5bb636f6cc60765ed25f294c74dd896e6d14b2093c3467a37b5d03a78a"
 
-# Run the app natively with auto-reload, data in ./data, on $PORT (8080)
+# Run the app natively with auto-reload, data in ./data, on $PORT (8080: port 80 needs root on a host)
 run:
     DATA_DIR="${DATA_DIR:-./data}" uv run uvicorn redirect.main:app --reload --host 127.0.0.1 --port "${PORT:-8080}"
 
@@ -18,13 +18,21 @@ run:
 image:
     docker build --tag {{ app_image }} .
 
-# Run the app image with compose (compose.yaml) and wait until it is healthy, on http://localhost:8080
+# Run the app image locally and wait until it is healthy, on http://localhost:8080 (port 80 in the container).
+# compose.yaml is the deployment example: it gives the container its own IP on the LAN, which a laptop's
+# Docker (Desktop) cannot do.
 up: image
-    REDIRECT_IMAGE={{ app_image }} docker compose up --detach --wait
+    #!/usr/bin/env bash
+    set -euo pipefail
+    docker rm --force redirect-dev >/dev/null 2>&1 || true
+    docker run --detach --name redirect-dev --publish 127.0.0.1:8080:80 --volume redirect-dev-data:/data \
+      {{ app_image }} >/dev/null
+    until [ "$(docker inspect --format '{{{{.State.Health.Status}}' redirect-dev)" = healthy ]; do sleep 1; done
+    echo "Redirect is up on http://localhost:8080"
 
-# Stop and remove the compose container; the data volume stays
+# Stop and remove the container of `just up`; its data volume (redirect-dev-data) stays
 down:
-    REDIRECT_IMAGE={{ app_image }} docker compose down
+    docker rm --force redirect-dev >/dev/null
 
 # Build the app image for PLATFORM and test it running: health, API, 302, volume, clean stop (CI job image:app)
 image-test PLATFORM=ci_platform:

@@ -1,5 +1,6 @@
 # Redirect in one command: docker compose up -d
-# The interface is then at http://<this host>:8080/ and the links at http://<this host>:8080/redirect/<path>.
+# The container gets its own address on the LAN (macvlan below), so the links need no port:
+# the interface is at http://192.168.1.20/ and the links at http://192.168.1.20/redirect/<path>.
 # Redirections live in the named volume below: they survive restarts, upgrades and `docker compose down`.
 services:
   redirect:
@@ -7,8 +8,10 @@ services:
     # REDIRECT_IMAGE runs another one, e.g. redirect:local built from this repository by `just image`.
     image: ${REDIRECT_IMAGE:-ghcr.io/cestmoiroma/redirect:latest}
     restart: unless-stopped
-    ports:
-      - '8080:8080'
+    networks:
+      lan:
+        # A free address of your LAN, outside the range your router's DHCP hands out
+        ipv4_address: 192.168.1.20
     volumes:
       - redirect-data:/data
     environment:
@@ -16,14 +19,25 @@ services:
       # scripts use. Left empty, the interface and the API are open to anyone who can reach them, and every
       # page says so in red. Changing it logs every session out.
       ADMIN_PASSWORD: ''
+      # Port the server listens on: 80 unless you need another one
+      # PORT: 80
       # Base of the public links the interface shows and copies. Unset, links follow the address the
-      # browser used to reach Redirect, which is right on a LAN. Set it when that address is not the one
-      # to share: another published port, a DNS name, or a reverse proxy serving HTTPS.
+      # browser used to reach Redirect. Set it for a DNS name or a reverse proxy serving HTTPS.
       # PUBLIC_BASE_URL: https://go.example.org
       # Addresses whose X-Forwarded-* headers are trusted (scheme and client IP). The default trusts the
-      # loopback only, so a reverse proxy in another container is ignored: links then stay http://.
-      # Set it to the proxy's address, or set PUBLIC_BASE_URL above, which always wins.
-      # FORWARDED_ALLOW_IPS: 172.18.0.2
+      # loopback only. Set it to your reverse proxy's address, or set PUBLIC_BASE_URL above, which always wins.
+      # FORWARDED_ALLOW_IPS: 192.168.1.30
+
+networks:
+  lan:
+    driver: macvlan
+    driver_opts:
+      # The host's network interface on that LAN (see `ip link`)
+      parent: eth0
+    ipam:
+      config:
+        - subnet: 192.168.1.0/24
+          gateway: 192.168.1.1
 
 volumes:
   redirect-data:

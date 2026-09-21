@@ -244,7 +244,7 @@ def test_public_url_joins_base_prefix_and_slug(base, slug, expected):
 
 def test_settings_defaults():
     settings = Settings.from_env({})
-    assert settings == Settings(port=8080, public_base_url=None, log_level="INFO")
+    assert settings == Settings(port=80, public_base_url=None, log_level="INFO")
     assert str(settings.db_path) == "/data/redirect.db"
 
 

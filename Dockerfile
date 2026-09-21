@@ -57,7 +57,7 @@ import os
 import sys
 import urllib.request
 
-url = f"http://127.0.0.1:{os.environ.get('PORT', '').strip() or '8080'}/api/health"
+url = f"http://127.0.0.1:{os.environ.get('PORT', '').strip() or '80'}/api/health"
 opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 try:
     with opener.open(url, timeout=3) as response:
@@ -66,16 +66,17 @@ except Exception as exc:  # 503, refused connection, timeout
     sys.exit(f"unhealthy: {exc}")
 EOF
 
-# PORT, DATA_DIR and LOG_LEVEL are the app's defaults, spelled out. PUBLIC_BASE_URL stays unset: links then
+# PORT, DATA_DIR and LOG_LEVEL are the app's defaults, spelled out. Port 80 needs no capability: Docker lets
+# any user of a container bind low ports (net.ipv4.ip_unprivileged_port_start=0). PUBLIC_BASE_URL stays unset: links then
 # follow the Host header. FORWARDED_ALLOW_IPS is read by uvicorn: X-Forwarded-* headers are trusted from
 # these addresses only. The default is uvicorn's (loopback only); behind a reverse proxy, set the proxy's address.
 ENV PATH=/venv/bin:$PATH PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 \
-    PORT=8080 DATA_DIR=/data LOG_LEVEL=INFO FORWARDED_ALLOW_IPS=127.0.0.1,::1
+    PORT=80 DATA_DIR=/data LOG_LEVEL=INFO FORWARDED_ALLOW_IPS=127.0.0.1,::1
 
 WORKDIR /app
 USER 10001:10001
 VOLUME /data
-EXPOSE 8080
+EXPOSE 80
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --start-interval=2s --retries=3 \
   CMD ["python", "/app/healthcheck.py"]
